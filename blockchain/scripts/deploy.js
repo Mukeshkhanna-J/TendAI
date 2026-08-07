@@ -3,12 +3,14 @@ import hre from "hardhat";
 async function main() {
     const connection = await hre.network.create();
     const { ethers } = connection;
-    const contractFactory = await ethers.getContractFactory("SimpleStorage");
-    const contract = await contractFactory.deploy();
+    const contract = await ethers.deployContract("SimpleStorage");
+    await contract.waitForDeployment();
     console.log(await contract.getAddress());
 }
 
-main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-});
+main()
+    .then(() => process.exit(0))
+    .catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });
