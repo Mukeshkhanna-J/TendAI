@@ -2,6 +2,7 @@ import { defineConfig, configVariable } from "hardhat/config";
 import "@nomicfoundation/hardhat-ethers";
 import hardhatEthersPlugin from "@nomicfoundation/hardhat-ethers";
 import dotenv from "dotenv";
+import hardhatMocha from "@nomicfoundation/hardhat-mocha";
 
 dotenv.config();
 
@@ -12,7 +13,7 @@ export default defineConfig({
             evmVersion: "paris",
         },
     },
-    plugins: [hardhatEthersPlugin],
+    plugins: [hardhatEthersPlugin, hardhatMocha],
     networks: {
         ganache: {
             type: "http",
