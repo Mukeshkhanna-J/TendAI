@@ -1,17 +1,37 @@
+import { useEffect, useState } from "react";
 import { Search, ShieldCheck, Users, Award, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import BlockchainBadge from "../components/BlockchainBadge.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
-import { tenders } from "../services/mockData.js";
+import { tenderAPI } from "../services/api.js";
 import { formatCurrency, formatDate } from "../utils/format.js";
 
 export default function Home() {
-  const latest = tenders.filter((tender) => tender.status === "Live").slice(0, 5);
+  const [latest, setLatest] = useState([]);
+  const [statsData, setStatsData] = useState({ totalTenders: 0, activeBidders: 1284, awardedTenders: 0 });
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [tendersRes, statsRes] = await Promise.all([
+          tenderAPI.getAll({ status: "Live" }),
+          tenderAPI.getStats()
+        ]);
+        setLatest(tendersRes.slice(0, 5));
+        if (statsRes) setStatsData(statsRes);
+      } catch (err) {
+        console.error("Failed to load homepage data:", err);
+      }
+    }
+    fetchData();
+  }, []);
+
   const stats = [
-    { label: "Total Tenders", value: tenders.length, icon: FileText },
-    { label: "Active Bidders", value: "1,284", icon: Users },
-    { label: "Tenders Awarded", value: tenders.filter((tender) => tender.status === "Closed").length, icon: Award }
+    { label: "Total Tenders", value: statsData.totalTenders, icon: FileText },
+    { label: "Active Bidders", value: statsData.activeBidders.toLocaleString(), icon: Users },
+    { label: "Tenders Awarded", value: statsData.awardedTenders, icon: Award }
   ];
 
   return (
@@ -32,9 +52,16 @@ export default function Home() {
             <div className="mt-6 flex max-w-2xl flex-col gap-3 rounded-lg border border-gov-line bg-slate-50 p-3 sm:flex-row">
               <div className="flex flex-1 items-center gap-2 rounded-md bg-white px-3 ring-1 ring-slate-200">
                 <Search className="h-5 w-5 text-slate-400" />
-                <input className="w-full py-3 text-sm outline-none" placeholder="Search by tender ID, organisation, or keyword" />
+                <input
+                  className="w-full py-3 text-sm outline-none"
+                  placeholder="Search by tender ID, organisation, or keyword"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
               </div>
-              <Link to="/tenders" className="btn-primary">Search Tenders</Link>
+              <Link to={`/tenders${searchQuery ? `?search=${encodeURIComponent(searchQuery)}` : ''}`} className="btn-primary">
+                Search Tenders
+              </Link>
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-1">
@@ -51,13 +78,34 @@ export default function Home() {
       <section className="page-shell py-8">
         <div className="mb-4 flex items-center justify-between gap-4">
           <h2 className="text-xl font-bold text-gov-navy">Latest Active Tenders</h2>
-          <Link className="text-sm font-semibold text-gov-blue hover:text-gov-navy" to="/tenders">View all</Link>
+          <Link className="text-sm font-semibold text-gov-blue hover:text-gov-navy" to="/tenders">
+            View all
+          </Link>
         </div>
         <DataTable
           data={latest}
           columns={[
-            { key: "id", header: "Tender ID", render: (tender) => <Link className="font-semibold text-gov-blue" to={`/tenders/${tender.id}`}>{tender.id}</Link> },
-            { key: "title", header: "Title", render: (tender) => <div className="min-w-72"><div className="font-medium text-slate-900">{tender.title}</div><div className="mt-1"><BlockchainBadge txHash={tender.txHash} /></div></div> },
+            {
+              key: "id",
+              header: "Tender ID",
+              render: (tender) => (
+                <Link className="font-semibold text-gov-blue" to={`/tenders/${tender.id}`}>
+                  {tender.id}
+                </Link>
+              )
+            },
+            {
+              key: "title",
+              header: "Title",
+              render: (tender) => (
+                <div className="min-w-72">
+                  <div className="font-medium text-slate-900">{tender.title}</div>
+                  <div className="mt-1">
+                    <BlockchainBadge txHash={tender.txHash} />
+                  </div>
+                </div>
+              )
+            },
             { key: "organisation", header: "Organisation" },
             { key: "publishedDate", header: "Published Date", render: (tender) => formatDate(tender.publishedDate) },
             { key: "closingDate", header: "Closing Date", render: (tender) => formatDate(tender.closingDate) },

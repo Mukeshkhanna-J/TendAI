@@ -1,19 +1,72 @@
+import { useEffect, useState } from "react";
 import { Download, FileText } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
 import BlockchainBadge from "../components/BlockchainBadge.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import TrustScoreBadge from "../components/TrustScoreBadge.jsx";
-import { bids, tenders } from "../services/mockData.js";
+import { useAuth } from "../hooks/useAuth.js";
+import { tenderAPI, bidAPI } from "../services/api.js";
 import { formatCurrency, formatDate, formatDateTime } from "../utils/format.js";
 
 export default function TenderDetail() {
   const { tenderId } = useParams();
-  const tender = tenders.find((item) => item.id === tenderId);
-  if (!tender) {
-    return <section className="page-shell py-8"><div className="panel p-6">Tender not found. <Link className="text-gov-blue" to="/tenders">Back to tenders</Link></div></section>;
+  const { user } = useAuth();
+  const [tender, setTender] = useState(null);
+  const [tenderBids, setTenderBids] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    async function fetchTenderDetail() {
+      setLoading(true);
+      try {
+        const data = await tenderAPI.getById(tenderId);
+        setTender(data);
+
+        // Fetch bids for this tender
+        try {
+          const bidsRes = await bidAPI.getByTender(tenderId);
+          if (bidsRes && bidsRes.data) {
+            setTenderBids(bidsRes.data);
+          } else if (data.bids) {
+            setTenderBids(data.bids);
+          }
+        } catch (bErr) {
+          if (data.bids) setTenderBids(data.bids);
+        }
+      } catch (err) {
+        console.error("Error fetching tender detail:", err);
+        setError("Tender not found or backend API error.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchTenderDetail();
+  }, [tenderId]);
+
+  if (loading) {
+    return (
+      <section className="page-shell py-8">
+        <div className="panel p-6 text-slate-500">Loading tender details...</div>
+      </section>
+    );
   }
-  const tenderBids = bids.filter((bid) => bid.tenderId === tender.id);
+
+  if (error || !tender) {
+    return (
+      <section className="page-shell py-8">
+        <div className="panel p-6">
+          {error || "Tender not found."}{" "}
+          <Link className="text-gov-blue font-semibold ml-2" to="/tenders">
+            Back to tenders
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
+  const showBids = tender.bidsVisible || user?.role === "admin" || tenderBids.length > 0;
 
   return (
     <section className="page-shell py-8">
@@ -48,7 +101,7 @@ export default function TenderDetail() {
           </div>
           <div className="panel p-5">
             <h2 className="text-lg font-semibold text-gov-navy">Submitted Bids</h2>
-            {tender.bidsVisible ? (
+            {showBids && tenderBids.length > 0 ? (
               <div className="mt-4">
                 <DataTable
                   data={tenderBids}
@@ -64,7 +117,9 @@ export default function TenderDetail() {
               </div>
             ) : (
               <p className="mt-3 rounded-md bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
-                Bidder identities and AI Trust Scores will be visible after bid closing.
+                {tenderBids.length === 0
+                  ? "No bids have been submitted for this tender yet."
+                  : "Bidder identities and AI Trust Scores will be visible after bid closing."}
               </p>
             )}
           </div>
@@ -73,25 +128,34 @@ export default function TenderDetail() {
           <div className="panel p-5">
             <h2 className="text-lg font-semibold text-gov-navy">Documents</h2>
             <div className="mt-3 space-y-2">
-              {tender.documents.map((document) => (
-                <a key={document} className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50" href="#">
-                  <span className="flex items-center gap-2"><FileText className="h-4 w-4 text-gov-blue" />{document}</span>
-                  <Download className="h-4 w-4" />
-                </a>
-              ))}
+              {tender.documents &&
+                tender.documents.map((document) => (
+                  <a
+                    key={document}
+                    className="flex items-center justify-between rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    href="#"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-gov-blue" />
+                      {document}
+                    </span>
+                    <Download className="h-4 w-4" />
+                  </a>
+                ))}
             </div>
           </div>
           <div className="panel p-5">
             <h2 className="text-lg font-semibold text-gov-navy">On-chain Timeline</h2>
             <ol className="mt-4 space-y-4">
-              {tender.timeline.map((event, index) => (
-                <li key={`${event.label}-${index}`} className="relative border-l-2 border-slate-200 pl-4">
-                  <span className="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-gov-blue ring-4 ring-blue-50" />
-                  <p className="font-semibold text-slate-900">{event.label}</p>
-                  <p className="text-xs text-slate-500">{event.timestamp ? formatDateTime(event.timestamp) : "Awaiting event"}</p>
-                  <p className="mt-1 break-all text-xs text-slate-600">Tx: {event.txHash}</p>
-                </li>
-              ))}
+              {tender.timeline &&
+                tender.timeline.map((event, index) => (
+                  <li key={`${event.label}-${index}`} className="relative border-l-2 border-slate-200 pl-4">
+                    <span className="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-gov-blue ring-4 ring-blue-50" />
+                    <p className="font-semibold text-slate-900">{event.label}</p>
+                    <p className="text-xs text-slate-500">{event.timestamp ? formatDateTime(event.timestamp) : "Awaiting event"}</p>
+                    <p className="mt-1 break-all text-xs text-slate-600">Tx: {event.txHash}</p>
+                  </li>
+                ))}
             </ol>
           </div>
         </aside>

@@ -1,10 +1,42 @@
+# Dependencies
 node_modules/
+**/node_modules/
+
+# Production builds
 dist/
+build/
+**/dist/
+**/build/
 
+# Environment variables & Secrets
 .env
-.env.local
+.env.*
+!.env.example
+*.env
+rough_notes.txt
+*.pem
+*.key
 
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# IDEs and Editors
 .vscode/
 .idea/
+*.swp
+*.swo
+.project
+.settings/
 
-*.log
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Testing & Coverage
+coverage/
+.nyc_output/
