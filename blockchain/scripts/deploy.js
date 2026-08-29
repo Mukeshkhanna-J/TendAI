@@ -3,7 +3,7 @@ import hre from "hardhat";
 async function main() {
     const connection = await hre.network.create();
     const { ethers } = connection;
-    const contract = await ethers.deployContract("SimpleStorage");
+    const contract = await ethers.deployContract("TenderContractBasic");
     await contract.waitForDeployment();
     console.log(await contract.getAddress());
 }

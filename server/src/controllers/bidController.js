@@ -1,6 +1,6 @@
-import Bid from '../models/Bid.js';
-import Tender from '../models/Tender.js';
-import { generateTxHash } from '../utils/generateHash.js';
+import Bid from "../models/Bid.js";
+import Tender from "../models/Tender.js";
+import { generateTxHash } from "../utils/generateHash.js";
 
 /**
  * @desc    Submit a new bid for a tender
@@ -8,53 +8,55 @@ import { generateTxHash } from '../utils/generateHash.js';
  * @access  Private (Bidder)
  */
 export const submitBid = async (req, res, next) => {
-  try {
-    const { tenderId, amount } = req.body;
+    try {
+        const { tenderId, amount } = req.body;
+        const org_name = req.user.organisation;
+        // Check if tender exists
+        const tender = await Tender.findOne({ id: tenderId });
+        if (!tender) {
+            return res.status(404).json({
+                success: false,
+                message: `Tender not found with ID ${tenderId}`,
+            });
+        }
 
-    // Check if tender exists
-    const tender = await Tender.findOne({ id: tenderId });
-    if (!tender) {
-      return res.status(404).json({
-        success: false,
-        message: `Tender not found with ID ${tenderId}`
-      });
+        if (tender.status !== "Live") {
+            return res.status(400).json({
+                success: false,
+                message: `Cannot submit bid for a tender with status '${tender.status}'`,
+            });
+        }
+
+        // Count existing bids to construct custom ID
+        const count = await Bid.countDocuments();
+        const customId = `BID-${940 + count}`;
+
+        const txHash = generateTxHash();
+        const trustScore = Math.floor(Math.random() * (95 - 70 + 1)) + 70;
+        const submittedAt = new Date().toISOString().slice(0, 10);
+
+        const newBid = await Bid.create({
+            id: customId,
+            tenderId,
+            bidder:
+                req.user.organisation || req.user.name || "Registered Bidder",
+            user: req.user._id,
+            amount: Number(amount),
+            submittedAt,
+            status: "Under Evaluation",
+            trustScore,
+            txHash,
+        });
+
+        res.status(201).json({
+            success: true,
+            message:
+                "Bid submitted successfully with AI trust scoring and on-chain verification",
+            data: newBid,
+        });
+    } catch (error) {
+        next(error);
     }
-
-    if (tender.status !== 'Live') {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot submit bid for a tender with status '${tender.status}'`
-      });
-    }
-
-    // Count existing bids to construct custom ID
-    const count = await Bid.countDocuments();
-    const customId = `BID-${940 + count}`;
-
-    const txHash = generateTxHash();
-    const trustScore = Math.floor(Math.random() * (95 - 70 + 1)) + 70;
-    const submittedAt = new Date().toISOString().slice(0, 10);
-
-    const newBid = await Bid.create({
-      id: customId,
-      tenderId,
-      bidder: req.user.organisation || req.user.name || 'Registered Bidder',
-      user: req.user._id,
-      amount: Number(amount),
-      submittedAt,
-      status: 'Under Evaluation',
-      trustScore,
-      txHash
-    });
-
-    res.status(201).json({
-      success: true,
-      message: 'Bid submitted successfully with AI trust scoring and on-chain verification',
-      data: newBid
-    });
-  } catch (error) {
-    next(error);
-  }
 };
 
 /**
@@ -63,19 +65,22 @@ export const submitBid = async (req, res, next) => {
  * @access  Private (Bidder)
  */
 export const getMyBids = async (req, res, next) => {
-  try {
-    const bids = await Bid.find({
-      $or: [{ user: req.user._id }, { bidder: req.user.organisation || req.user.name }]
-    }).sort({ createdAt: -1 });
+    try {
+        const bids = await Bid.find({
+            $or: [
+                { user: req.user._id },
+                { bidder: req.user.organisation || req.user.name },
+            ],
+        }).sort({ createdAt: -1 });
 
-    res.status(200).json({
-      success: true,
-      count: bids.length,
-      data: bids
-    });
-  } catch (error) {
-    next(error);
-  }
+        res.status(200).json({
+            success: true,
+            count: bids.length,
+            data: bids,
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
 /**
@@ -84,17 +89,17 @@ export const getMyBids = async (req, res, next) => {
  * @access  Private (Admin)
  */
 export const getAllBidsForAdmin = async (req, res, next) => {
-  try {
-    const bids = await Bid.find().sort({ createdAt: -1 });
+    try {
+        const bids = await Bid.find().sort({ createdAt: -1 });
 
-    res.status(200).json({
-      success: true,
-      count: bids.length,
-      data: bids
-    });
-  } catch (error) {
-    next(error);
-  }
+        res.status(200).json({
+            success: true,
+            count: bids.length,
+            data: bids,
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
 /**
@@ -103,36 +108,36 @@ export const getAllBidsForAdmin = async (req, res, next) => {
  * @access  Public / Private
  */
 export const getBidsByTenderId = async (req, res, next) => {
-  try {
-    const { tenderId } = req.params;
-    const tender = await Tender.findOne({ id: tenderId });
+    try {
+        const { tenderId } = req.params;
+        const tender = await Tender.findOne({ id: tenderId });
 
-    if (!tender) {
-      return res.status(404).json({
-        success: false,
-        message: 'Tender not found'
-      });
+        if (!tender) {
+            return res.status(404).json({
+                success: false,
+                message: "Tender not found",
+            });
+        }
+
+        // Check if bids are visible publicly or if requester is admin/owner
+        if (!tender.bidsVisible && (!req.user || req.user.role !== "admin")) {
+            return res.status(200).json({
+                success: true,
+                bidsVisible: false,
+                message: "Bid details are sealed until closing date",
+                data: [],
+            });
+        }
+
+        const bids = await Bid.find({ tenderId }).sort({ amount: 1 });
+
+        res.status(200).json({
+            success: true,
+            bidsVisible: true,
+            count: bids.length,
+            data: bids,
+        });
+    } catch (error) {
+        next(error);
     }
-
-    // Check if bids are visible publicly or if requester is admin/owner
-    if (!tender.bidsVisible && (!req.user || req.user.role !== 'admin')) {
-      return res.status(200).json({
-        success: true,
-        bidsVisible: false,
-        message: 'Bid details are sealed until closing date',
-        data: []
-      });
-    }
-
-    const bids = await Bid.find({ tenderId }).sort({ amount: 1 });
-
-    res.status(200).json({
-      success: true,
-      bidsVisible: true,
-      count: bids.length,
-      data: bids
-    });
-  } catch (error) {
-    next(error);
-  }
 };
