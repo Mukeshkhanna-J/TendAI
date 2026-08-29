@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ShieldAlert, ShieldCheck, TriangleAlert, X } from "lucide-react";
+import { ShieldAlert, ShieldCheck, X } from "lucide-react";
 import { bidAPI } from "../services/api.js";
 import { computeCommitHash, getBidOnChain } from "../blockchain/chain.js";
 import { formatCurrency } from "../utils/format.js";
@@ -84,22 +84,6 @@ export default function BidVerificationPanel({ bid, onClose }) {
     }
   }
 
-  function simulateAttack() {
-    // Simulate a bidder (or attacker with document access) quietly lowering
-    // the amount stated in the document *after* the on-chain commitment was
-    // already made — e.g. after seeing a competitor's bid come in lower.
-    const tampered = Math.max(1, Math.round(bid.amount * 0.9));
-    setDocumentAmount(String(tampered));
-    setDocumentName("BidDocument-edited.pdf");
-    setResult(null);
-  }
-
-  function useHonestAmount() {
-    setDocumentAmount(String(bid.amount));
-    setDocumentName("BidDocument.pdf");
-    setResult(null);
-  }
-
   const verified = result?.data?.status === "Verified";
   const failed = result?.data?.status === "Failed";
 
@@ -110,7 +94,8 @@ export default function BidVerificationPanel({ bid, onClose }) {
           <h3 className="text-base font-semibold text-gov-navy">Bid Document Verification — {bid.id}</h3>
           <p className="mt-1 text-sm text-slate-600">
             Committed amount: <strong>{formatCurrency(bid.amount)}</strong> · Hashed with a random salt in your
-            browser and committed on-chain by your wallet at submission.
+            browser and committed on-chain by your wallet at submission. The amount below is pre-filled from your
+            current record — if an admin edits it after the fact, verification will catch the mismatch below.
           </p>
         </div>
         <button type="button" onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
@@ -150,19 +135,6 @@ export default function BidVerificationPanel({ bid, onClose }) {
           </button>
         </div>
       </form>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={useHonestAmount} className="btn-secondary text-xs">
-          Use actual committed amount
-        </button>
-        <button
-          type="button"
-          onClick={simulateAttack}
-          className="inline-flex items-center gap-1.5 rounded-md border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-100"
-        >
-          <TriangleAlert className="h-3.5 w-3.5" /> Simulate tampering attack
-        </button>
-      </div>
 
       {error && <p className="mt-3 text-sm text-rose-600">{error}</p>}
 
