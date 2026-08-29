@@ -7,6 +7,7 @@ import authRoutes from './src/routes/authRoutes.js';
 import tenderRoutes from './src/routes/tenderRoutes.js';
 import bidRoutes from './src/routes/bidRoutes.js';
 import savedTenderRoutes from './src/routes/savedTenderRoutes.js';
+import feedbackRoutes from './src/routes/feedbackRoutes.js';
 import { notFound, errorHandler } from './src/middleware/errorHandler.js';
 
 dotenv.config();
@@ -55,6 +56,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/tenders', tenderRoutes);
 app.use('/api/bids', bidRoutes);
 app.use('/api/saved-tenders', savedTenderRoutes);
+app.use('/api/feedback', feedbackRoutes);
 
 // Error Handling Middleware
 app.use(notFound);

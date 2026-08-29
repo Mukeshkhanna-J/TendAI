@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ShieldAlert, ShieldCheck, TriangleAlert, X } from "lucide-react";
 import { bidAPI } from "../services/api.js";
+import { computeCommitHash, getBidOnChain } from "../blockchain/chain.js";
 import { formatCurrency } from "../utils/format.js";
 
 function HashRow({ label, value }) {
@@ -27,13 +28,57 @@ export default function BidVerificationPanel({ bid, onClose }) {
     setError("");
     setResult(null);
     try {
-      const res = await bidAPI.verifyDocument(bid.id, {
-        documentAmount: Number(documentAmount),
-        documentName
-      });
-      setResult(res);
+      // Everything here runs in the browser: recompute the hash from the
+      // claimed document amount + the bid's salt, read the bid's real
+      // commitment straight from the blockchain (getBid), and compare the
+      // two locally. No server round-trip decides the outcome.
+      const recomputedHash = computeCommitHash(documentAmount, bid.salt);
+      const onChain = await getBidOnChain(bid.id);
+
+      if (!onChain.exists) {
+        const failResult = {
+          data: {
+            status: "Failed",
+            revealedAmount: Number(documentAmount),
+            recomputedHash,
+            onChainHash: "",
+            reason: "No on-chain commitment exists for this bid ID — nothing to verify against."
+          },
+          source: "blockchain (client-side read)"
+        };
+        setResult(failResult);
+        return;
+      }
+
+      const verified = recomputedHash.toLowerCase() === onChain.commitHash.toLowerCase();
+      const verifyResult = {
+        data: {
+          status: verified ? "Verified" : "Failed",
+          revealedAmount: Number(documentAmount),
+          recomputedHash,
+          onChainHash: onChain.commitHash,
+          reason: verified
+            ? "Document amount matches the on-chain commitment."
+            : "Document amount does not match the on-chain commitment. Verification failed — possible tampering."
+        },
+        source: "blockchain (client-side read)"
+      };
+      setResult(verifyResult);
+
+      // Best-effort: persist the outcome so the Admin Dashboard and public
+      // transparency page can show it too. The verdict above already stands
+      // on its own — this is just for other views, not a re-check.
+      bidAPI
+        .recordVerification(bid.id, {
+          verified,
+          documentAmount: Number(documentAmount),
+          documentName,
+          recomputedHash,
+          onChainHash: onChain.commitHash
+        })
+        .catch(() => {});
     } catch (err) {
-      setError(err.response?.data?.message || "Verification request failed.");
+      setError(err.message || "Verification failed while reading the blockchain.");
     } finally {
       setLoading(false);
     }
@@ -64,8 +109,8 @@ export default function BidVerificationPanel({ bid, onClose }) {
         <div>
           <h3 className="text-base font-semibold text-gov-navy">Bid Document Verification — {bid.id}</h3>
           <p className="mt-1 text-sm text-slate-600">
-            Committed amount: <strong>{formatCurrency(bid.amount)}</strong> · Hashed with a random salt and signed
-            with your wallet at submission, then written to the blockchain.
+            Committed amount: <strong>{formatCurrency(bid.amount)}</strong> · Hashed with a random salt in your
+            browser and committed on-chain by your wallet at submission.
           </p>
         </div>
         <button type="button" onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
@@ -136,7 +181,6 @@ export default function BidVerificationPanel({ bid, onClose }) {
             <HashRow label="Document Amount" value={formatCurrency(result.data.revealedAmount)} />
             <HashRow label="Recomputed Hash" value={result.data.recomputedHash} />
             <HashRow label={`On-Chain Hash (${result.source})`} value={result.data.onChainHash} />
-            <HashRow label="Signature Valid" value={result.data.signatureValid ? "Yes" : "No"} />
           </div>
           {failed && (
             <p className="mt-3 text-xs text-rose-600">

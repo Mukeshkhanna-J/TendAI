@@ -1,20 +1,23 @@
 import Bid from '../models/Bid.js';
 import Tender from '../models/Tender.js';
-import User from '../models/User.js';
-import { generateTxHash } from '../utils/generateHash.js';
-import { generateSalt, computeCommitHash, signCommitHash, recoverSigner } from '../utils/commitReveal.js';
-import { commitBidOnChain, getOnChainCommitment, isChainAvailable } from '../blockchain/chainService.js';
+import { getOnChainCommitment, isChainAvailable } from '../blockchain/chainService.js';
+import { analyzeBid } from '../utils/trustAnalysis.js';
+import { checkBidIntegrity, checkManyBidIntegrity } from '../services/integrityService.js';
 
 /**
- * @desc    Submit a new bid for a tender
+ * @desc    Record a bid whose commitment was already submitted directly to
+ *          the blockchain from the bidder's own wallet (MetaMask, in the
+ *          browser — see client/src/blockchain/chain.js). The server never
+ *          generates the hash, never signs anything, and never holds a
+ *          private key on the bidder's behalf; it only trusts what it can
+ *          independently verify by reading the chain itself.
  * @route   POST /api/bids
  * @access  Private (Bidder)
  */
 export const submitBid = async (req, res, next) => {
   try {
-    const { tenderId, amount } = req.body;
+    const { id, tenderId, amount, salt, commitHash, txHash, chainBlockNumber, bidderWalletAddress } = req.body;
 
-    // Check if tender exists
     const tender = await Tender.findOne({ id: tenderId });
     if (!tender) {
       return res.status(404).json({
@@ -30,51 +33,40 @@ export const submitBid = async (req, res, next) => {
       });
     }
 
-    // Count existing bids to construct custom ID. The on-chain contract
-    // enforces a write-once commitment per bidId, so if the counter and the
-    // chain ever fall out of sync (e.g. a database reset while the chain
-    // persists, as happens with the in-memory demo DB) we bump past any ID
-    // that's already committed rather than failing the whole submission.
-    let count = await Bid.countDocuments();
-    let customId = `BID-${940 + count}`;
-    const chainUp = await isChainAvailable();
-    if (chainUp) {
-      while ((await getOnChainCommitment(customId)).exists) {
-        count += 1;
-        customId = `BID-${940 + count}`;
-      }
+    const existing = await Bid.findOne({ id });
+    if (existing) {
+      return res.status(409).json({ success: false, message: `Bid ID ${id} has already been recorded.` });
     }
 
-    const trustScore = Math.floor(Math.random() * (95 - 70 + 1)) + 70;
+    // Trust-but-verify: don't take the client's word for the on-chain
+    // commitment — independently read the chain and require it to match
+    // before persisting anything. This is what stops a malicious client
+    // from claiming a commitment it never actually made.
+    if (!(await isChainAvailable())) {
+      return res.status(503).json({
+        success: false,
+        message: 'Blockchain node unreachable — cannot verify the on-chain commitment for this bid.'
+      });
+    }
+    const onChain = await getOnChainCommitment(id);
+    if (!onChain.exists) {
+      return res.status(400).json({
+        success: false,
+        message: 'No on-chain commitment found for this bid ID. Submit the transaction from your wallet first.'
+      });
+    }
+    if (onChain.commitHash.toLowerCase() !== String(commitHash).toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        message: 'The commit hash does not match what is recorded on-chain for this bid ID.'
+      });
+    }
+
+    const { score: trustScore, factors: trustFactors } = analyzeBid(Number(amount), tender);
     const submittedAt = new Date().toISOString().slice(0, 10);
 
-    // --- Commit step: hash the bid amount with a random salt, sign the
-    // hash with the bidder's wallet key, then push the hash on-chain. ---
-    const salt = generateSalt();
-    const commitHash = computeCommitHash(amount, salt);
-
-    const bidderUser = await User.findById(req.user._id).select('+walletPrivateKey');
-    const { signature, address: bidderWalletAddress } = await signCommitHash(
-      bidderUser.walletPrivateKey,
-      commitHash
-    );
-
-    let txHash;
-    let chainBlockNumber = null;
-
-    if (chainUp) {
-      const chainResult = await commitBidOnChain(customId, commitHash);
-      txHash = chainResult.txHash;
-      chainBlockNumber = chainResult.blockNumber;
-    } else {
-      // Local blockchain node isn't running — fall back to a simulated
-      // hash so the rest of the app still works, but verification against
-      // an on-chain commitment won't be possible for this bid.
-      txHash = generateTxHash();
-    }
-
     const newBid = await Bid.create({
-      id: customId,
+      id,
       tenderId,
       bidder: req.user.organisation || req.user.name || 'Registered Bidder',
       user: req.user._id,
@@ -82,17 +74,17 @@ export const submitBid = async (req, res, next) => {
       submittedAt,
       status: 'Under Evaluation',
       trustScore,
+      trustFactors,
       txHash,
       salt,
       commitHash,
-      signature,
-      bidderWalletAddress,
-      chainBlockNumber
+      bidderWalletAddress: onChain.submitter || bidderWalletAddress,
+      chainBlockNumber: chainBlockNumber ?? null
     });
 
     res.status(201).json({
       success: true,
-      message: 'Bid submitted successfully with AI trust scoring and on-chain verification',
+      message: 'Bid recorded and independently verified against the on-chain commitment.',
       data: newBid
     });
   } catch (error) {
@@ -111,10 +103,12 @@ export const getMyBids = async (req, res, next) => {
       $or: [{ user: req.user._id }, { bidder: req.user.organisation || req.user.name }]
     }).sort({ createdAt: -1 });
 
+    const enriched = await checkManyBidIntegrity(bids);
+
     res.status(200).json({
       success: true,
       count: bids.length,
-      data: bids
+      data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
     });
   } catch (error) {
     next(error);
@@ -130,10 +124,58 @@ export const getAllBidsForAdmin = async (req, res, next) => {
   try {
     const bids = await Bid.find().sort({ createdAt: -1 });
 
+    const enriched = await checkManyBidIntegrity(bids);
+
     res.status(200).json({
       success: true,
       count: bids.length,
-      data: bids
+      data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    DEMO ONLY — directly overrides a bid's stored amount, bypassing
+ *          the commit-reveal flow entirely (no new salt/hash is generated,
+ *          and the blockchain commitment is left untouched).
+ *          This simulates an insider (or a compromised admin account)
+ *          editing a bid record directly in the database. Because the
+ *          on-chain commitment can't be rewritten, the change is
+ *          immediately detectable via checkBidIntegrity — every place the
+ *          bid is displayed will start reporting it as "Compromised".
+ * @route   PATCH /api/bids/:id/admin-override
+ * @access  Private (Admin)
+ */
+export const adminOverrideBidAmount = async (req, res, next) => {
+  try {
+    const { amount, note } = req.body;
+
+    const bid = await Bid.findOne({ id: req.params.id });
+    if (!bid) {
+      return res.status(404).json({ success: false, message: 'Bid not found' });
+    }
+
+    const previousAmount = bid.amount;
+    bid.amount = Number(amount);
+    bid.adminModified = {
+      at: new Date(),
+      byAdminName: req.user.name || req.user.email,
+      previousAmount,
+      note: note || 'Amount overridden directly by an administrator (demo: insider tampering).'
+    };
+    await bid.save();
+
+    const integrity = await checkBidIntegrity(bid);
+
+    res.status(200).json({
+      success: true,
+      message: integrity.intact
+        ? 'Bid amount updated. The new value happens to still match the blockchain commitment.'
+        : 'Bid amount overridden directly in the database, bypassing the blockchain-verified commit. This bid now fails integrity verification everywhere it is displayed.',
+      data: bid,
+      integrity
     });
   } catch (error) {
     next(error);
@@ -168,12 +210,13 @@ export const getBidsByTenderId = async (req, res, next) => {
     }
 
     const bids = await Bid.find({ tenderId }).sort({ amount: 1 });
+    const enriched = await checkManyBidIntegrity(bids);
 
     res.status(200).json({
       success: true,
       bidsVisible: true,
       count: bids.length,
-      data: bids
+      data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
     });
   } catch (error) {
     next(error);
@@ -181,17 +224,20 @@ export const getBidsByTenderId = async (req, res, next) => {
 };
 
 /**
- * @desc    Verify a submitted bid document's stated amount against the
- *          immutable on-chain commitment made at bid submission time.
- *          This is the "reveal" half of the commit-reveal scheme: it
- *          proves whether the document's amount matches what was
- *          originally committed, catching any post-submission tampering.
+ * @desc    Persist the result of a document verification the bidder's
+ *          browser already performed entirely client-side (see
+ *          client/src/blockchain/chain.js and BidVerificationPanel.jsx):
+ *          it read the commitment directly from the chain via getBid,
+ *          recomputed the hash from the document amount + salt, and
+ *          compared them locally. This endpoint only records that outcome
+ *          so it's visible on the Admin Dashboard and public transparency
+ *          page too — the server does not redo or arbitrate the check.
  * @route   POST /api/bids/:id/verify-document
  * @access  Private (Bidder who owns the bid, or Admin)
  */
-export const verifyBidDocument = async (req, res, next) => {
+export const recordVerificationResult = async (req, res, next) => {
   try {
-    const { documentAmount, documentName } = req.body;
+    const { verified, documentAmount, documentName, recomputedHash, onChainHash } = req.body;
 
     const bid = await Bid.findOne({ id: req.params.id });
     if (!bid) {
@@ -200,49 +246,8 @@ export const verifyBidDocument = async (req, res, next) => {
 
     const isOwner = bid.user && bid.user.toString() === req.user._id.toString();
     if (!isOwner && req.user.role !== 'admin') {
-      return res.status(403).json({ success: false, message: 'Not authorized to verify this bid' });
+      return res.status(403).json({ success: false, message: 'Not authorized to record verification for this bid' });
     }
-
-    if (!bid.salt || !bid.commitHash) {
-      return res.status(400).json({
-        success: false,
-        message: 'This bid has no commit-reveal record (submitted before verification was enabled).'
-      });
-    }
-
-    // Recompute the hash from the claimed document amount + the salt that
-    // was generated at commit time. An attacker who edits the document to
-    // change the amount cannot produce a matching hash without also
-    // knowing what the *original* amount was — the salt alone is useless
-    // for forging a different amount.
-    const recomputedHash = computeCommitHash(documentAmount, bid.salt);
-
-    // Look up the authoritative commitment. Prefer the immutable on-chain
-    // copy; only fall back to the DB-cached hash if the chain node isn't
-    // reachable (e.g. local demo without hardhat node running).
-    let onChainHash = bid.commitHash;
-    let source = 'database (blockchain node unreachable)';
-    if (await isChainAvailable()) {
-      const onChain = await getOnChainCommitment(bid.id);
-      if (onChain.exists) {
-        onChainHash = onChain.commitHash;
-        source = 'blockchain';
-      }
-    }
-
-    const hashesMatch = recomputedHash.toLowerCase() === onChainHash.toLowerCase();
-
-    let signatureValid = null;
-    if (bid.signature && bid.bidderWalletAddress) {
-      try {
-        const recovered = recoverSigner(bid.commitHash, bid.signature);
-        signatureValid = recovered.toLowerCase() === bid.bidderWalletAddress.toLowerCase();
-      } catch {
-        signatureValid = false;
-      }
-    }
-
-    const verified = hashesMatch && signatureValid !== false;
 
     bid.verification = {
       status: verified ? 'Verified' : 'Failed',
@@ -250,25 +255,14 @@ export const verifyBidDocument = async (req, res, next) => {
       revealedAmount: Number(documentAmount),
       recomputedHash,
       onChainHash,
-      signatureValid,
       reason: verified
-        ? `Document amount matches the ${source} commitment.`
-        : !hashesMatch
-        ? `Document amount does not match the ${source} commitment. The bid amount may have been tampered with after submission.`
-        : 'Commit hash matches, but the wallet signature does not belong to the registered bidder.',
+        ? 'Document amount matched the on-chain commitment (checked client-side against the blockchain).'
+        : 'Document amount did not match the on-chain commitment. Verification failed — possible tampering.',
       verifiedAt: new Date()
     };
     await bid.save();
 
-    // Always 200: a failed verification is a legitimate, expected outcome
-    // of this check (that's the whole point of the tamper-detection demo),
-    // not a server error.
-    res.status(200).json({
-      success: true,
-      verified,
-      source,
-      data: bid.verification
-    });
+    res.status(200).json({ success: true, data: bid.verification });
   } catch (error) {
     next(error);
   }

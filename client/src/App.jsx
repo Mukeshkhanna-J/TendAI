@@ -6,6 +6,7 @@ import BidderDashboard from "./pages/BidderDashboard.jsx";
 import CreateTender from "./pages/CreateTender.jsx";
 import Home from "./pages/Home.jsx";
 import Login from "./pages/Login.jsx";
+import PublicTransparency from "./pages/PublicTransparency.jsx";
 import Register from "./pages/Register.jsx";
 import TenderDetail from "./pages/TenderDetail.jsx";
 import TenderList from "./pages/TenderList.jsx";
@@ -25,6 +26,7 @@ export default function App() {
         <Route index element={<Home />} />
         <Route path="tenders" element={<TenderList />} />
         <Route path="tenders/:tenderId" element={<TenderDetail />} />
+        <Route path="transparency" element={<PublicTransparency />} />
         <Route path="login" element={<Login />} />
         <Route path="register" element={<Register />} />
       </Route>

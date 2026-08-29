@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
-import { Plus, Save, ShieldCheck } from "lucide-react";
+import { Plus, Save, ShieldCheck, Wallet } from "lucide-react";
 import { Link } from "react-router-dom";
 import BidVerificationPanel from "../components/BidVerificationPanel.jsx";
-import BlockchainBadge from "../components/BlockchainBadge.jsx";
 import DataTable from "../components/DataTable.jsx";
+import IntegrityBadge from "../components/IntegrityBadge.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import TrustScoreBadge from "../components/TrustScoreBadge.jsx";
 import { bidAPI, savedAPI, tenderAPI } from "../services/api.js";
+import { connectWallet, generateSalt, computeCommitHash, submitBidOnChain } from "../blockchain/chain.js";
 import { formatCurrency, formatDate } from "../utils/format.js";
+
+function shortenAddress(address) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
 
 export default function BidderDashboard() {
   const [myBids, setMyBids] = useState([]);
@@ -18,6 +23,8 @@ export default function BidderDashboard() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [verifyingBid, setVerifyingBid] = useState(null);
+  const [wallet, setWallet] = useState(null);
+  const [connectingWallet, setConnectingWallet] = useState(false);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -43,22 +50,61 @@ export default function BidderDashboard() {
     loadDashboardData();
   }, []);
 
+  async function handleConnectWallet() {
+    setConnectingWallet(true);
+    setMessage("");
+    try {
+      const { signer, address } = await connectWallet();
+      setWallet({ signer, address });
+      setMessage(`Wallet connected: ${shortenAddress(address)}`);
+    } catch (err) {
+      setMessage(err.message || "Could not connect wallet.");
+    } finally {
+      setConnectingWallet(false);
+    }
+  }
+
   async function submitBid(event) {
     event.preventDefault();
+    if (!wallet) {
+      setMessage("Connect your MetaMask wallet before submitting a bid.");
+      return;
+    }
     if (!form.tenderId || !form.amount) return;
+
     setSubmitting(true);
     setMessage("");
     try {
-      const newBid = await bidAPI.submit({
+      // Everything below happens in the browser: the bid ID, the salt, and
+      // the commit hash are all generated client-side, then the hash is
+      // written on-chain by a transaction signed with the bidder's own
+      // MetaMask key — the server is not involved in any of this.
+      const bidId = `BID-${form.tenderId.slice(-3)}-${Date.now().toString(36).toUpperCase()}`;
+      const salt = generateSalt();
+      const commitHash = computeCommitHash(form.amount, salt);
+
+      setMessage("Confirm the transaction in MetaMask to commit your bid on-chain...");
+      const { txHash, blockNumber } = await submitBidOnChain(wallet.signer, bidId, commitHash);
+
+      setMessage("On-chain commit confirmed — recording bid...");
+      await bidAPI.record({
+        id: bidId,
         tenderId: form.tenderId,
-        amount: Number(form.amount)
+        amount: Number(form.amount),
+        salt,
+        commitHash,
+        txHash,
+        chainBlockNumber: blockNumber,
+        bidderWalletAddress: wallet.address
       });
-      setMyBids((current) => [newBid, ...current]);
+
+      const refreshedBids = await bidAPI.getMyBids();
+      setMyBids(refreshedBids || []);
       setForm({ tenderId: liveTenders[0]?.id || "", amount: "" });
-      setMessage("Bid submitted successfully with AI trust score!");
+      setMessage("Bid committed on-chain and recorded successfully!");
     } catch (err) {
       console.error("Failed to submit bid:", err);
-      setMessage(err.response?.data?.message || "Failed to submit bid.");
+      setMessage(err.reason || err.response?.data?.message || err.message || "Failed to submit bid.");
     } finally {
       setSubmitting(false);
     }
@@ -102,7 +148,7 @@ export default function BidderDashboard() {
                     { key: "submittedAt", header: "Submitted", render: (bid) => formatDate(bid.submittedAt) },
                     { key: "trustScore", header: "Trust Score", render: (bid) => <TrustScoreBadge score={bid.trustScore} /> },
                     { key: "status", header: "Status", render: (bid) => <StatusBadge status={bid.status} /> },
-                    { key: "txHash", header: "Verification", render: (bid) => <BlockchainBadge txHash={bid.txHash} /> },
+                    { key: "integrity", header: "Verification", render: (bid) => <IntegrityBadge integrity={bid.integrity} /> },
                     {
                       key: "verify",
                       header: "",
@@ -148,6 +194,30 @@ export default function BidderDashboard() {
           <h2 className="flex items-center gap-2 text-lg font-semibold text-gov-navy">
             <Plus className="h-5 w-5" /> Submit New Bid
           </h2>
+
+          <div className="mt-4 rounded-md border border-slate-200 p-3">
+            {wallet ? (
+              <div className="flex items-center gap-2 text-sm text-emerald-700">
+                <Wallet className="h-4 w-4" />
+                Connected: <span className="font-mono">{shortenAddress(wallet.address)}</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleConnectWallet}
+                disabled={connectingWallet}
+                className="btn-secondary w-full"
+              >
+                <Wallet className="h-4 w-4" />
+                {connectingWallet ? "Connecting..." : "Connect MetaMask Wallet"}
+              </button>
+            )}
+            <p className="mt-2 text-xs text-slate-500">
+              Your bid amount is hashed and committed on-chain directly from your wallet — signed by you, never by
+              our server.
+            </p>
+          </div>
+
           <div className="mt-4 space-y-4">
             <label className="block text-sm font-medium text-slate-700">
               Tender
@@ -174,8 +244,8 @@ export default function BidderDashboard() {
                 onChange={(event) => setForm({ ...form, amount: event.target.value })}
               />
             </label>
-            <button className="btn-primary w-full" type="submit" disabled={submitting || liveTenders.length === 0}>
-              {submitting ? "Submitting Bid..." : "Submit Bid"}
+            <button className="btn-primary w-full" type="submit" disabled={submitting || liveTenders.length === 0 || !wallet}>
+              {submitting ? "Submitting Bid..." : "Hash, Sign & Submit Bid"}
             </button>
           </div>
         </form>

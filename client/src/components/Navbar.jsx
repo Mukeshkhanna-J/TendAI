@@ -34,6 +34,7 @@ export default function Navbar() {
           <div className="hidden items-center gap-1 md:flex">
             <NavLink className={navClass} to="/">Home</NavLink>
             <NavLink className={navClass} to="/tenders">Tenders</NavLink>
+            <NavLink className={navClass} to="/transparency">Public Transparency</NavLink>
             {isAuthenticated ? (
               <>
                 <NavLink className={navClass} to={dashboardPath}>Dashboard</NavLink>
@@ -48,6 +49,7 @@ export default function Navbar() {
           <div className="space-y-1 pb-4 md:hidden">
             <NavLink onClick={() => setOpen(false)} className={navClass} to="/">Home</NavLink>
             <NavLink onClick={() => setOpen(false)} className={navClass} to="/tenders">Tenders</NavLink>
+            <NavLink onClick={() => setOpen(false)} className={navClass} to="/transparency">Public Transparency</NavLink>
             {isAuthenticated ? (
               <>
                 <NavLink onClick={() => setOpen(false)} className={navClass} to={dashboardPath}>Dashboard</NavLink>
