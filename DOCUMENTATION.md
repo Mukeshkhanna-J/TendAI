@@ -22,7 +22,8 @@ Welcome to the comprehensive technical documentation for the **TendAI Production
 7. [Frontend Integration & Vite Proxy](#7-frontend-integration--vite-proxy)
 8. [Database Seeding & Automated Setup](#8-database-seeding--automated-setup)
 9. [Environment Configuration & Deployment](#9-environment-configuration--deployment)
-10. [Error Handling & Response Specifications](#10-error-handling--response-specifications)
+10. [Commit-Reveal Bid Integrity & Tamper Detection](#10-commit-reveal-bid-integrity--tamper-detection)
+11. [Error Handling & Response Specifications](#11-error-handling--response-specifications)
 
 ---
 
@@ -463,26 +464,84 @@ JWT_SECRET=tendai_super_secret_jwt_key_2026_production_v1
 JWT_EXPIRES_IN=7d
 CLIENT_URL=http://localhost:5173
 NODE_ENV=development
+
+BLOCKCHAIN_RPC_URL=http://127.0.0.1:8545
+BID_VERIFICATION_CONTRACT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+BLOCKCHAIN_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
 ```
 
 ### Steps to Run:
 ```bash
-# 1. Open Terminal in server directory
-cd server
-
-# 2. Install dependencies
+# 1. Start a local blockchain node (leave running in its own terminal)
+cd blockchain
 npm install
+npx hardhat node
 
-# 3. Launch Development Server with auto-watch
+# 2. Deploy the BidVerification contract to it (writes the ABI + address
+#    into server/src/blockchain/BidVerification.json automatically)
+npx hardhat run scripts/deployBidVerification.js --network localhost
+
+# 3. Start the backend
+cd ../server
+npm install
 npm run dev
+# No local MongoDB? No problem — db.js automatically falls back to a
+# throwaway in-memory MongoDB instance in development so the app still
+# boots and seeds its demo data. Data resets whenever the server restarts.
 
-# Or Launch Production Server
-npm start
+# 4. Start the frontend
+cd ../client
+npm install
+npm run dev
 ```
 
 ---
 
-## 10. Error Handling & Response Specifications
+## 10. Commit-Reveal Bid Integrity & Tamper Detection
+
+Beyond the simulated `txHash` used for tender timeline events, bid **amounts**
+are protected end-to-end by a real commit-reveal scheme backed by an actual
+local Ethereum-compatible chain (Hardhat), not just a mocked hash string.
+
+```mermaid
+flowchart TD
+    A["Bid amount + random salt"] --> B["commitHash = keccak256(amount, salt)"]
+    B --> C["Signed with bidder's wallet key"]
+    C --> D["BidVerification.commitBid(bidId, commitHash) on-chain"]
+    D --> E["Immutable: contract reverts on any second write for the same bidId"]
+
+    F["Later: bid document is submitted"] --> G["recomputedHash = keccak256(documentAmount, salt)"]
+    G --> H{"recomputedHash == on-chain commitHash?"}
+    H -->|Yes| I["Verified — document matches the original commitment"]
+    H -->|No| J["Failed — tampering detected"]
+```
+
+**Why the salt can be stored in plaintext:** the security of this scheme comes
+from `commitHash` being a one-way function, not from keeping the salt secret.
+Knowing the salt alone is useless for forging a different amount — you would
+already need to know the *exact* original amount to reproduce the hash.
+
+**Implementation:**
+- `blockchain/contracts/BidVerification.sol` — write-once commitment store per `bidId`.
+- `server/src/blockchain/chainService.js` — ethers.js client (JSON-RPC provider + relayer wallet) that commits and reads back commitments.
+- `server/src/utils/commitReveal.js` — salt generation, hashing, wallet signing/recovery.
+- Every registered `User` gets a demo Ethereum wallet (`walletAddress` / `walletPrivateKey`) generated on creation, used purely to sign commit hashes for this demo. A real deployment would never custody a user's private key server-side — a browser wallet (e.g. MetaMask) would sign client-side instead.
+- `POST /api/bids` — the commit step: hashes the amount, signs it, writes it on-chain, stores `salt`/`commitHash`/`signature`/`bidderWalletAddress` on the `Bid`.
+- `POST /api/bids/:id/verify-document` — the reveal step: recomputes the hash from a claimed document amount + stored salt, compares it against the **on-chain** commitment (not the mutable database row), and records `Verified` or `Failed`.
+
+**Demo attack:** In the Bidder Dashboard, each bid with a commitment has a
+"Verify Document" action. The panel offers **Simulate tampering attack**,
+which pre-fills a document amount different from what was actually
+committed (as if a bidder — or someone with document access — quietly
+edited the submitted amount after the blockchain commitment was already
+made, e.g. after seeing a competitor's price). Running verification against
+that tampered amount correctly returns **Verification Failed**, with the
+mismatched hashes shown side by side; the honest amount still returns
+**Verified**.
+
+---
+
+## 11. Error Handling & Response Specifications
 
 All API errors return consistent JSON responses with appropriate HTTP status codes:
 

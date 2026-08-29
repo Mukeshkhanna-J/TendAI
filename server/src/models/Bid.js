@@ -42,6 +42,49 @@ const bidSchema = new mongoose.Schema(
     txHash: {
       type: String,
       required: true
+    },
+
+    // --- Commit-reveal integrity fields ---
+    // salt + commitHash + signature are produced at submission time.
+    // commitHash is also written immutably on-chain (see chainService.js);
+    // the DB copy here is only a convenience cache for display, never the
+    // source of truth used during verification.
+    salt: {
+      type: String,
+      default: ''
+    },
+    commitHash: {
+      type: String,
+      default: ''
+    },
+    signature: {
+      type: String,
+      default: ''
+    },
+    bidderWalletAddress: {
+      type: String,
+      default: ''
+    },
+    chainBlockNumber: {
+      type: Number,
+      default: null
+    },
+
+    // Populated later when a bid document (containing the claimed amount)
+    // is submitted and checked against the on-chain commitment.
+    verification: {
+      status: {
+        type: String,
+        enum: ['Not Submitted', 'Verified', 'Failed'],
+        default: 'Not Submitted'
+      },
+      documentName: { type: String, default: '' },
+      revealedAmount: { type: Number, default: null },
+      recomputedHash: { type: String, default: '' },
+      onChainHash: { type: String, default: '' },
+      signatureValid: { type: Boolean, default: null },
+      reason: { type: String, default: '' },
+      verifiedAt: { type: Date, default: null }
     }
   },
   {

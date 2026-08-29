@@ -80,6 +80,10 @@ export const bidAPI = {
   getByTender: async (tenderId) => {
     const res = await API.get(`/bids/tender/${tenderId}`);
     return res.data;
+  },
+  verifyDocument: async (bidId, payload) => {
+    const res = await API.post(`/bids/${bidId}/verify-document`, payload);
+    return res.data;
   }
 };
 

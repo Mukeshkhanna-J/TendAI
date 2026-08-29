@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Plus, Save } from "lucide-react";
+import { Plus, Save, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
+import BidVerificationPanel from "../components/BidVerificationPanel.jsx";
 import BlockchainBadge from "../components/BlockchainBadge.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -16,6 +17,7 @@ export default function BidderDashboard() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+  const [verifyingBid, setVerifyingBid] = useState(null);
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -100,9 +102,26 @@ export default function BidderDashboard() {
                     { key: "submittedAt", header: "Submitted", render: (bid) => formatDate(bid.submittedAt) },
                     { key: "trustScore", header: "Trust Score", render: (bid) => <TrustScoreBadge score={bid.trustScore} /> },
                     { key: "status", header: "Status", render: (bid) => <StatusBadge status={bid.status} /> },
-                    { key: "txHash", header: "Verification", render: (bid) => <BlockchainBadge txHash={bid.txHash} /> }
+                    { key: "txHash", header: "Verification", render: (bid) => <BlockchainBadge txHash={bid.txHash} /> },
+                    {
+                      key: "verify",
+                      header: "",
+                      render: (bid) =>
+                        bid.commitHash ? (
+                          <button
+                            type="button"
+                            onClick={() => setVerifyingBid(verifyingBid?.id === bid.id ? null : bid)}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                          >
+                            <ShieldCheck className="h-3.5 w-3.5" /> Verify Document
+                          </button>
+                        ) : null
+                    }
                   ]}
                 />
+              )}
+              {verifyingBid && (
+                <BidVerificationPanel bid={verifyingBid} onClose={() => setVerifyingBid(null)} />
               )}
             </div>
           </section>

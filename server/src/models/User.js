@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import { ethers } from 'ethers';
 
 const userSchema = new mongoose.Schema(
   {
@@ -34,7 +35,21 @@ const userSchema = new mongoose.Schema(
       {
         type: String // Stores tender custom id e.g. "TND-2026-001"
       }
-    ]
+    ],
+    // DEMO-ONLY simulated crypto wallet used to sign bid commit hashes.
+    // A real system would never let the private key touch the server —
+    // the user's own wallet (e.g. MetaMask) would sign client-side. It is
+    // custodied here purely so the commit/verify demo works end-to-end
+    // without requiring every demo user to install a wallet extension.
+    walletAddress: {
+      type: String,
+      default: ''
+    },
+    walletPrivateKey: {
+      type: String,
+      default: '',
+      select: false
+    }
   },
   {
     timestamps: true
@@ -43,11 +58,18 @@ const userSchema = new mongoose.Schema(
 
 // Encrypt password before saving user
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) {
-    return next();
+  if (this.isModified('password')) {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
   }
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
+
+  // Give every new user a demo wallet so they can sign bid commitments.
+  if (this.isNew && !this.walletAddress) {
+    const wallet = ethers.Wallet.createRandom();
+    this.walletAddress = wallet.address;
+    this.walletPrivateKey = wallet.privateKey;
+  }
+
   next();
 });
 
