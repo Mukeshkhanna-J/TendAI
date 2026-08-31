@@ -65,6 +65,10 @@ export const tenderAPI = {
 };
 
 export const bidAPI = {
+  // Records a bid whose commit hash the bidder's own wallet has ALREADY
+  // written on-chain (see client/src/hooks/useSubmitToChain.js). The
+  // server independently re-checks that on-chain commitment before
+  // accepting it.
   submit: async (bidData) => {
     const res = await API.post("/bids", bidData);
     return res.data.data;
@@ -79,6 +83,10 @@ export const bidAPI = {
   },
   getByTender: async (tenderId) => {
     const res = await API.get(`/bids/tender/${tenderId}`);
+    return res.data;
+  },
+  adminOverride: async (bidId, payload) => {
+    const res = await API.patch(`/bids/${bidId}/admin-override`, payload);
     return res.data;
   }
 };

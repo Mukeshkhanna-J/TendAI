@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Plus, Save } from "lucide-react";
+import { Plus, Save, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
-import BlockchainBadge from "../components/BlockchainBadge.jsx";
+import BidVerificationPanel from "../components/BidVerificationPanel.jsx";
 import DataTable from "../components/DataTable.jsx";
+import IntegrityBadge from "../components/IntegrityBadge.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import TrustScoreBadge from "../components/TrustScoreBadge.jsx";
 import { bidAPI, savedAPI, tenderAPI } from "../services/api.js";
@@ -19,7 +20,8 @@ export default function BidderDashboard() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState("");
-    const { isConnected } = useAccount();
+    const [verifyingBid, setVerifyingBid] = useState(null);
+    const { isConnected, address } = useAccount();
     const submitToChain = useSubmitToChain();
     useEffect(() => {
         async function loadDashboardData() {
@@ -54,25 +56,35 @@ export default function BidderDashboard() {
         setSubmitting(true);
         setMessage("");
         try {
-            // want to change to not send amount to DB (changed here)
-            // const newBid = await bidAPI.submit({
-            //     tenderId: form.tenderId,
-            //     amount: Number(form.amount),
-            // });
-            // console.log(typeof form.amount);
-            const hash = await submitToChain({
+            // Everything below happens in the browser: the salt and commit
+            // hash are generated client-side, then the hash is written
+            // on-chain by a transaction signed with the bidder's own
+            // connected wallet — the server is not involved in any of this.
+            setMessage("Confirm the transaction in your wallet to commit your bid on-chain...");
+            const { txHash, salt, commitHash } = await submitToChain({
                 tenderId: form.tenderId,
                 amount: form.amount,
             });
-            console.log("Transaction: " + hash);
-            setMyBids((current) => [...current]);
+
+            setMessage("On-chain commit confirmed — recording bid...");
+            await bidAPI.submit({
+                tenderId: form.tenderId,
+                amount: Number(form.amount),
+                salt,
+                commitHash,
+                txHash,
+                bidderWalletAddress: address,
+            });
+
+            const refreshedBids = await bidAPI.getMyBids();
+            setMyBids(refreshedBids || []);
             setForm({ tenderId: liveTenders[0]?.id || "", amount: "" });
             setMessage(
-                "Bid submitted successfully to blockchain with AI trust score!",
+                "Bid committed on-chain and recorded successfully!",
             );
         } catch (err) {
             console.error("Failed to submit bid:", err);
-            setMessage(err.response?.data?.message || "Failed to submit bid.");
+            setMessage(err.shortMessage || err.response?.data?.message || err.message || "Failed to submit bid.");
         } finally {
             setSubmitting(false);
         }
@@ -155,16 +167,37 @@ export default function BidderDashboard() {
                                             ),
                                         },
                                         {
-                                            key: "txHash",
+                                            key: "integrity",
                                             header: "Verification",
                                             render: (bid) => (
-                                                <BlockchainBadge
-                                                    txHash={bid.txHash}
+                                                <IntegrityBadge
+                                                    integrity={bid.integrity}
                                                 />
                                             ),
                                         },
+                                        {
+                                            key: "verify",
+                                            header: "",
+                                            render: (bid) =>
+                                                bid.commitHash ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            setVerifyingBid(
+                                                                verifyingBid?.id === bid.id ? null : bid,
+                                                            )
+                                                        }
+                                                        className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                                                    >
+                                                        <ShieldCheck className="h-3.5 w-3.5" /> Verify Document
+                                                    </button>
+                                                ) : null,
+                                        },
                                     ]}
                                 />
+                            )}
+                            {verifyingBid && (
+                                <BidVerificationPanel bid={verifyingBid} onClose={() => setVerifyingBid(null)} />
                             )}
                         </div>
                     </section>

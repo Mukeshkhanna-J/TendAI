@@ -6,7 +6,14 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function main() {
-    const connection = await hre.network.create();
+    // Deploys to the persistent Ganache instance defined in
+    // hardhat.config.ts (requires GANACHE_RPC_URL / GANACHE_PRIVATE_KEY in
+    // blockchain/.env, and a real Ganache node already running there).
+    // Deploying to the default ephemeral network instead — e.g. by running
+    // this script without --network ganache — spins up an in-memory chain
+    // that vanishes the moment this process exits, silently writing an
+    // address to contractDetails.json that no longer refers to anything.
+    const connection = await hre.network.create("ganache");
     const { ethers } = connection;
     const contract = await ethers.deployContract("TenderContract");
     await contract.waitForDeployment();

@@ -1,62 +1,96 @@
-import Bid from "../models/Bid.js";
-import Tender from "../models/Tender.js";
-import { generateTxHash } from "../utils/generateHash.js";
+import Bid from '../models/Bid.js';
+import Tender from '../models/Tender.js';
+import { getOnChainCommitment, isChainAvailable } from '../blockchain/chainService.js';
+import { checkBidIntegrity, checkManyBidIntegrity } from '../services/integrityService.js';
 
 /**
- * @desc    Submit a new bid for a tender
+ * @desc    Record a bid whose commitment was already submitted directly to
+ *          the blockchain from the bidder's own connected wallet (see
+ *          client/src/hooks/useSubmitToChain.js). The server never
+ *          generates the hash and never signs anything; it only trusts what
+ *          it can independently verify by reading the chain itself.
  * @route   POST /api/bids
  * @access  Private (Bidder)
  */
 export const submitBid = async (req, res, next) => {
-    try {
-        const { tenderId, amount } = req.body;
-        const org_name = req.user.organisation;
-        // Check if tender exists
-        const tender = await Tender.findOne({ id: tenderId });
-        if (!tender) {
-            return res.status(404).json({
-                success: false,
-                message: `Tender not found with ID ${tenderId}`,
-            });
-        }
+  try {
+    const { tenderId, amount, salt, commitHash, txHash, bidderWalletAddress } = req.body;
 
-        if (tender.status !== "Live") {
-            return res.status(400).json({
-                success: false,
-                message: `Cannot submit bid for a tender with status '${tender.status}'`,
-            });
-        }
-
-        // Count existing bids to construct custom ID
-        const count = await Bid.countDocuments();
-        const customId = `BID-${940 + count}`;
-
-        const txHash = generateTxHash();
-        const trustScore = Math.floor(Math.random() * (95 - 70 + 1)) + 70;
-        const submittedAt = new Date().toISOString().slice(0, 10);
-
-        const newBid = await Bid.create({
-            id: customId,
-            tenderId,
-            bidder:
-                req.user.organisation || req.user.name || "Registered Bidder",
-            user: req.user._id,
-            amount: Number(amount),
-            submittedAt,
-            status: "Under Evaluation",
-            trustScore,
-            txHash,
-        });
-
-        res.status(201).json({
-            success: true,
-            message:
-                "Bid submitted successfully with AI trust scoring and on-chain verification",
-            data: newBid,
-        });
-    } catch (error) {
-        next(error);
+    const tender = await Tender.findOne({ id: tenderId });
+    if (!tender) {
+      return res.status(404).json({
+        success: false,
+        message: `Tender not found with ID ${tenderId}`
+      });
     }
+
+    if (tender.status !== 'Live') {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot submit bid for a tender with status '${tender.status}'`
+      });
+    }
+
+    // Trust-but-verify: don't take the client's word for the on-chain
+    // commitment — independently read the chain and require it to match
+    // before persisting anything. This is what stops a malicious client
+    // from claiming a commitment it never actually made.
+    if (!(await isChainAvailable())) {
+      return res.status(503).json({
+        success: false,
+        message: 'Blockchain node unreachable — cannot verify the on-chain commitment for this bid.'
+      });
+    }
+    const onChain = await getOnChainCommitment(tenderId, bidderWalletAddress);
+    if (!onChain.exists) {
+      return res.status(400).json({
+        success: false,
+        message: 'No on-chain commitment found for this tender from this wallet. Submit the transaction from your wallet first.'
+      });
+    }
+    if (onChain.commitHash.toLowerCase() !== String(commitHash).toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        message: 'The commit hash does not match what is recorded on-chain for this tender/wallet.'
+      });
+    }
+
+    const existing = await Bid.findOne({ tenderId, bidderWalletAddress: onChain.submitter });
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: 'This wallet has already recorded a bid for this tender.'
+      });
+    }
+
+    const count = await Bid.countDocuments();
+    const customId = `BID-${940 + count}`;
+    const trustScore = Math.floor(Math.random() * (95 - 70 + 1)) + 70;
+    const submittedAt = new Date().toISOString().slice(0, 10);
+
+    const newBid = await Bid.create({
+      id: customId,
+      tenderId,
+      bidder: req.user.organisation || req.user.name || 'Registered Bidder',
+      user: req.user._id,
+      amount: Number(amount),
+      submittedAt,
+      status: 'Under Evaluation',
+      trustScore,
+      txHash,
+      salt,
+      commitHash,
+      bidderWalletAddress: onChain.submitter || bidderWalletAddress
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Bid recorded and independently verified against the on-chain commitment.',
+      data: newBid
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -65,22 +99,21 @@ export const submitBid = async (req, res, next) => {
  * @access  Private (Bidder)
  */
 export const getMyBids = async (req, res, next) => {
-    try {
-        const bids = await Bid.find({
-            $or: [
-                { user: req.user._id },
-                { bidder: req.user.organisation || req.user.name },
-            ],
-        }).sort({ createdAt: -1 });
+  try {
+    const bids = await Bid.find({
+      $or: [{ user: req.user._id }, { bidder: req.user.organisation || req.user.name }]
+    }).sort({ createdAt: -1 });
 
-        res.status(200).json({
-            success: true,
-            count: bids.length,
-            data: bids,
-        });
-    } catch (error) {
-        next(error);
-    }
+    const enriched = await checkManyBidIntegrity(bids);
+
+    res.status(200).json({
+      success: true,
+      count: bids.length,
+      data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -89,17 +122,65 @@ export const getMyBids = async (req, res, next) => {
  * @access  Private (Admin)
  */
 export const getAllBidsForAdmin = async (req, res, next) => {
-    try {
-        const bids = await Bid.find().sort({ createdAt: -1 });
+  try {
+    const bids = await Bid.find().sort({ createdAt: -1 });
 
-        res.status(200).json({
-            success: true,
-            count: bids.length,
-            data: bids,
-        });
-    } catch (error) {
-        next(error);
+    const enriched = await checkManyBidIntegrity(bids);
+
+    res.status(200).json({
+      success: true,
+      count: bids.length,
+      data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    DEMO ONLY — directly overrides a bid's stored amount, bypassing
+ *          the commit-reveal flow entirely (no new salt/hash is generated,
+ *          and the blockchain commitment is left untouched). This simulates
+ *          an insider (or a compromised admin account) editing a bid record
+ *          directly in the database. Because the on-chain commitment can't
+ *          be rewritten, the change is immediately detectable via
+ *          checkBidIntegrity — every place the bid is displayed will start
+ *          reporting it as "Compromised".
+ * @route   PATCH /api/bids/:id/admin-override
+ * @access  Private (Admin)
+ */
+export const adminOverrideBidAmount = async (req, res, next) => {
+  try {
+    const { amount, note } = req.body;
+
+    const bid = await Bid.findOne({ id: req.params.id });
+    if (!bid) {
+      return res.status(404).json({ success: false, message: 'Bid not found' });
     }
+
+    const previousAmount = bid.amount;
+    bid.amount = Number(amount);
+    bid.adminModified = {
+      at: new Date(),
+      byAdminName: req.user.name || req.user.email,
+      previousAmount,
+      note: note || 'Amount overridden directly by an administrator (demo: insider tampering).'
+    };
+    await bid.save();
+
+    const integrity = await checkBidIntegrity(bid);
+
+    res.status(200).json({
+      success: true,
+      message: integrity.intact
+        ? 'Bid amount updated. The new value happens to still match the blockchain commitment.'
+        : 'Bid amount overridden directly in the database, bypassing the blockchain-verified commit. This bid now fails integrity verification everywhere it is displayed.',
+      data: bid,
+      integrity
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 /**
@@ -108,36 +189,37 @@ export const getAllBidsForAdmin = async (req, res, next) => {
  * @access  Public / Private
  */
 export const getBidsByTenderId = async (req, res, next) => {
-    try {
-        const { tenderId } = req.params;
-        const tender = await Tender.findOne({ id: tenderId });
+  try {
+    const { tenderId } = req.params;
+    const tender = await Tender.findOne({ id: tenderId });
 
-        if (!tender) {
-            return res.status(404).json({
-                success: false,
-                message: "Tender not found",
-            });
-        }
-
-        // Check if bids are visible publicly or if requester is admin/owner
-        if (!tender.bidsVisible && (!req.user || req.user.role !== "admin")) {
-            return res.status(200).json({
-                success: true,
-                bidsVisible: false,
-                message: "Bid details are sealed until closing date",
-                data: [],
-            });
-        }
-
-        const bids = await Bid.find({ tenderId }).sort({ amount: 1 });
-
-        res.status(200).json({
-            success: true,
-            bidsVisible: true,
-            count: bids.length,
-            data: bids,
-        });
-    } catch (error) {
-        next(error);
+    if (!tender) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tender not found'
+      });
     }
+
+    // Check if bids are visible publicly or if requester is admin/owner
+    if (!tender.bidsVisible && (!req.user || req.user.role !== 'admin')) {
+      return res.status(200).json({
+        success: true,
+        bidsVisible: false,
+        message: 'Bid details are sealed until closing date',
+        data: []
+      });
+    }
+
+    const bids = await Bid.find({ tenderId }).sort({ amount: 1 });
+    const enriched = await checkManyBidIntegrity(bids);
+
+    res.status(200).json({
+      success: true,
+      bidsVisible: true,
+      count: bids.length,
+      data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
+    });
+  } catch (error) {
+    next(error);
+  }
 };
