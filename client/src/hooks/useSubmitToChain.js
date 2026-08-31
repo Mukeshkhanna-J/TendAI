@@ -1,18 +1,19 @@
 import { useWriteContract } from "wagmi";
-import abi from "../constants/abi.json";
-import { useAuth } from "../hooks/useAuth";
+import contractDetails from "../constants/contractDetails.json";
+import { sha256 } from "js-sha256";
 
 export function useSubmitToChain() {
-    const { user } = useAuth();
+    const { abi, address } = contractDetails;
     const { data: hash, writeContractAsync } = useWriteContract();
 
     const submitToChain = async (bidData) => {
-        console.log(bidData);
+        const hashOfAmount = `0x${sha256(bidData.amount)}`;
+        //console.log(hashOfAmount);
         const hash = writeContractAsync({
-            address: "0xf9B4B860d89b2de527Ec58cf79b8cfa9500b8a7e",
+            address: address,
             abi,
             functionName: "submitBid",
-            args: [bidData.tenderId, BigInt(bidData.amount), user.organisation],
+            args: [bidData.tenderId, hashOfAmount],
         });
         return hash;
     };

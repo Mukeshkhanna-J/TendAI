@@ -59,6 +59,7 @@ export default function BidderDashboard() {
             //     tenderId: form.tenderId,
             //     amount: Number(form.amount),
             // });
+            // console.log(typeof form.amount);
             const hash = await submitToChain({
                 tenderId: form.tenderId,
                 amount: form.amount,
