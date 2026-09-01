@@ -12,6 +12,10 @@ import { formatCurrency, formatDate } from "../utils/format.js";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 
+function shortenAddress(address) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
 export default function BidderDashboard() {
     const [myBids, setMyBids] = useState([]);
     const [savedTenders, setSavedTenders] = useState([]);

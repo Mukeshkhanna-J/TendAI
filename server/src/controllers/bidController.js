@@ -69,7 +69,7 @@ export const submitBid = async (req, res, next) => {
     const submittedAt = new Date().toISOString().slice(0, 10);
 
     const newBid = await Bid.create({
-      id: customId,
+      id,
       tenderId,
       bidder: req.user.organisation || req.user.name || 'Registered Bidder',
       user: req.user._id,
@@ -219,6 +219,51 @@ export const getBidsByTenderId = async (req, res, next) => {
       count: bids.length,
       data: enriched.map(({ bid, integrity }) => ({ ...bid.toObject(), integrity }))
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Persist the result of a document verification the bidder's
+ *          browser already performed entirely client-side (see
+ *          client/src/blockchain/chain.js and BidVerificationPanel.jsx):
+ *          it read the commitment directly from the chain via getBid,
+ *          recomputed the hash from the document amount + salt, and
+ *          compared them locally. This endpoint only records that outcome
+ *          so it's visible on the Admin Dashboard and public transparency
+ *          page too — the server does not redo or arbitrate the check.
+ * @route   POST /api/bids/:id/verify-document
+ * @access  Private (Bidder who owns the bid, or Admin)
+ */
+export const recordVerificationResult = async (req, res, next) => {
+  try {
+    const { verified, documentAmount, documentName, recomputedHash, onChainHash } = req.body;
+
+    const bid = await Bid.findOne({ id: req.params.id });
+    if (!bid) {
+      return res.status(404).json({ success: false, message: 'Bid not found' });
+    }
+
+    const isOwner = bid.user && bid.user.toString() === req.user._id.toString();
+    if (!isOwner && req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Not authorized to record verification for this bid' });
+    }
+
+    bid.verification = {
+      status: verified ? 'Verified' : 'Failed',
+      documentName: documentName || 'submitted-document',
+      revealedAmount: Number(documentAmount),
+      recomputedHash,
+      onChainHash,
+      reason: verified
+        ? 'Document amount matched the on-chain commitment (checked client-side against the blockchain).'
+        : 'Document amount did not match the on-chain commitment. Verification failed — possible tampering.',
+      verifiedAt: new Date()
+    };
+    await bid.save();
+
+    res.status(200).json({ success: true, data: bid.verification });
   } catch (error) {
     next(error);
   }

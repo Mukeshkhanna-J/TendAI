@@ -39,6 +39,22 @@ const bidSchema = new mongoose.Schema(
       type: Number,
       default: () => Math.floor(Math.random() * (95 - 65 + 1)) + 65
     },
+    // Snapshot of the transparent, rule-based factors that produced
+    // trustScore at submission time (see utils/trustAnalysis.js). Stored
+    // as a snapshot so the public "proof" for a score stays accurate even
+    // if the tender's value is edited later.
+    trustFactors: {
+      type: [
+        {
+          label: { type: String },
+          verdict: { type: String, enum: ['good', 'caution', 'bad'] },
+          impact: { type: Number },
+          detail: { type: String },
+          _id: false
+        }
+      ],
+      default: []
+    },
     txHash: {
       type: String,
       required: true

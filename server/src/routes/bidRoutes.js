@@ -16,6 +16,7 @@ const router = express.Router();
 // own wallet before calling this — the server independently re-verifies
 // that commitment against the chain rather than trusting the client.
 const bidValidation = [
+  body('id').trim().notEmpty().withMessage('Bid ID is required'),
   body('tenderId').trim().notEmpty().withMessage('Tender ID is required'),
   body('amount').isNumeric().withMessage('Bid amount must be a valid number'),
   body('salt').trim().notEmpty().withMessage('Salt is required'),

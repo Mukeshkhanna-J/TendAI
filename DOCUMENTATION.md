@@ -22,7 +22,9 @@ Welcome to the comprehensive technical documentation for the **TendAI Production
 7. [Frontend Integration & Vite Proxy](#7-frontend-integration--vite-proxy)
 8. [Database Seeding & Automated Setup](#8-database-seeding--automated-setup)
 9. [Environment Configuration & Deployment](#9-environment-configuration--deployment)
-10. [Error Handling & Response Specifications](#10-error-handling--response-specifications)
+10. [Commit-Reveal Bid Integrity & Tamper Detection](#10-commit-reveal-bid-integrity--tamper-detection)
+11. [Insider Tampering Demo & Public Transparency Page](#11-insider-tampering-demo--public-transparency-page)
+12. [Error Handling & Response Specifications](#12-error-handling--response-specifications)
 
 ---
 
@@ -463,26 +465,163 @@ JWT_SECRET=tendai_super_secret_jwt_key_2026_production_v1
 JWT_EXPIRES_IN=7d
 CLIENT_URL=http://localhost:5173
 NODE_ENV=development
+
+BLOCKCHAIN_RPC_URL=http://127.0.0.1:8545
+BID_VERIFICATION_CONTRACT_ADDRESS=0x610178dA211FEF7D417bC0e6FeD39F05609AD788
 ```
+No private key here — the server only reads from the contract. Bidders write to it from their own MetaMask wallet in the browser.
 
 ### Steps to Run:
 ```bash
-# 1. Open Terminal in server directory
-cd server
-
-# 2. Install dependencies
+# 1. Start a local blockchain node (leave running in its own terminal)
+cd blockchain
 npm install
+npx hardhat node
 
-# 3. Launch Development Server with auto-watch
+# 2. Deploy the BidVerification contract to it (writes the ABI + address
+#    into server/src/blockchain/BidVerification.json automatically)
+npx hardhat run scripts/deployBidVerification.js --network localhost
+
+# 3. Start the backend
+cd ../server
+npm install
 npm run dev
+# No local MongoDB? No problem — db.js automatically falls back to a
+# throwaway in-memory MongoDB instance in development so the app still
+# boots and seeds its demo data. Data resets whenever the server restarts.
 
-# Or Launch Production Server
-npm start
+# 4. Start the frontend
+cd ../client
+npm install
+npm run dev
 ```
 
 ---
 
-## 10. Error Handling & Response Specifications
+## 10. Commit-Reveal Bid Integrity & Tamper Detection
+
+Beyond the simulated `txHash` used for tender timeline events, bid **amounts**
+are protected end-to-end by a real commit-reveal scheme backed by an actual
+local Ethereum-compatible chain (Hardhat), not just a mocked hash string.
+
+```mermaid
+flowchart TD
+    A["Bid amount + random salt (generated in the browser)"] --> B["commitHash = keccak256(amount, salt)"]
+    B --> C["MetaMask signs & sends the transaction"]
+    C --> D["BidVerification.submitBid(bidId, commitHash) on-chain"]
+    D --> E["Immutable: contract reverts on any second write for the same bidId"]
+
+    F["Later: bid document is submitted"] --> G["recomputedHash = keccak256(documentAmount, salt) — computed in the browser"]
+    G --> H{"getBid(bidId) on-chain == recomputedHash?"}
+    H -->|Yes| I["Verified — document matches the original commitment"]
+    H -->|No| J["Failed — tampering detected"]
+```
+
+**Why the salt can be stored in plaintext:** the security of this scheme comes
+from `commitHash` being a one-way function, not from keeping the salt secret.
+Knowing the salt alone is useless for forging a different amount — you would
+already need to know the *exact* original amount to reproduce the hash.
+
+### The bidder's wallet does the signing — not the server
+
+Every write to the contract (`submitBid`) is signed by the bidder's own
+MetaMask account in their browser. The server never generates a hash, never
+holds a private key, and never signs a transaction on a bidder's behalf —
+it only ever reads from the contract (`getBid`) to independently verify
+what already happened on-chain.
+
+- `blockchain/contracts/BidVerification.sol` — write-once commitment store per `bidId`. `submitBid(bidId, commitHash)` writes; `getBid(bidId)` reads.
+- `client/src/blockchain/chain.js` — the client-side ethers.js module: `connectWallet()` (MetaMask via `window.ethereum`), `generateSalt()`, `computeCommitHash()`, `submitBidOnChain()` (signs + sends the tx), `getBidOnChain()` (read-only, works with or without a connected wallet by falling back to a plain JSON-RPC provider).
+- `client/src/pages/BidderDashboard.jsx` — "Connect MetaMask Wallet" button; submitting a bid hashes the amount, calls `submitBidOnChain`, then calls the server to *record* the result.
+- `server/src/blockchain/chainService.js` — read-only ethers.js client (no private key at all).
+- `POST /api/bids` — **not** a commit step anymore. The bidder's browser has already committed on-chain; this endpoint independently re-reads the chain via `getOnChainCommitment` and rejects the request (400) if no matching on-chain commitment exists, before persisting anything. A malicious client cannot get a fake bid recorded by lying about a commitment it never made.
+- `client/src/components/BidVerificationPanel.jsx` — the reveal step runs **entirely in the browser**: recomputes the hash from a claimed document amount + the bid's salt, calls `getBidOnChain()` directly, and compares locally. `POST /api/bids/:id/verify-document` is only called afterward, best-effort, to persist the already-decided outcome so the Admin Dashboard and public transparency page can display it too.
+
+**Demo attack:** In the Bidder Dashboard, each bid with a commitment has a
+"Verify Document" action. The panel offers **Simulate tampering attack**,
+which pre-fills a document amount different from what was actually
+committed (as if a bidder — or someone with document access — quietly
+edited the submitted amount after the blockchain commitment was already
+made, e.g. after seeing a competitor's price). Running verification against
+that tampered amount correctly returns **Verification Failed**, with the
+mismatched hashes shown side by side (all computed client-side); the honest
+amount still returns **Verified**.
+
+### Testing the real MetaMask flow
+
+This sandbox can exercise everything except the actual MetaMask popup (no
+extension is installed here). To test it for real:
+
+1. Install the [MetaMask](https://metamask.io) browser extension.
+2. Add a custom network: RPC URL `http://127.0.0.1:8545`, Chain ID `31337`.
+3. Import one of the Hardhat node's printed test accounts by private key (they're pre-funded with 10,000 test ETH — never use these keys on a real network).
+4. Open the Bidder Dashboard, click **Connect MetaMask Wallet**, approve the connection, then submit a bid — MetaMask will prompt you to confirm the transaction.
+
+---
+
+## 11. Insider Tampering Demo & Public Transparency Page
+
+### Live integrity checking (not just a one-time verify step)
+
+Section 10 covers the bidder-driven "submit a document, check it against the
+chain" flow. On top of that, `checkBidIntegrity()`
+(`server/src/services/integrityService.js`) recomputes `keccak256(amount, salt)`
+from a bid's **current** stored amount every time it's read, and compares it
+to the immutable on-chain commitment. This means *any* direct edit to a bid's
+`amount` — not just a mismatched document — is caught automatically,
+everywhere the bid is displayed. It's used by `GET /api/bids/my-bids`,
+`GET /api/bids/admin/all-bids`, and `GET /api/bids/tender/:tenderId`.
+
+### Admin override — the insider-tampering demo
+
+`PATCH /api/bids/:id/admin-override` (admin only) writes a new `amount`
+directly to a bid's database record, exactly as a rogue administrator or a
+compromised admin account could. It deliberately does **not** touch
+`salt`/`commitHash`/the blockchain — because it can't; the on-chain
+commitment is immutable. It does record traditional audit metadata
+(`bid.adminModified`: who, when, previous amount), so the demo shows two
+independent tamper-evidence mechanisms side by side:
+
+1. **Audit log** — "this record was edited by X at time Y" (can be deleted or forged by anyone with DB access).
+2. **Blockchain integrity check** — "the current amount's hash no longer matches what was committed at submission" (cannot be forged without breaking the hash function).
+
+In the Admin Dashboard, the **Bid Integrity Oversight** panel exposes this as
+an "Admin Override" action per bid. Applying it immediately flips that bid's
+badge to **Compromised** in the Admin Dashboard, the Bidder Dashboard, and
+the public transparency page — no page-specific logic, because all three
+call the same enriched list endpoints.
+
+### Transparent, explainable AI trust scoring
+
+`server/src/utils/trustAnalysis.js` replaced the old `Math.random()` trust
+score with a fully rule-based one: every point gained or lost is tied to a
+named, human-readable factor (e.g. "bid is 32% below estimate — flagged as
+abnormally low per common public-procurement practice"; "EMD ratio outside
+the typical 0.5%-5% band"). The factor list is snapshotted onto the bid at
+submission time (`trustFactors`) so the score's "proof" stays accurate even
+if the tender is edited later. The `AIScoreBreakdown` component renders this
+as an expandable "Why this score?" panel. If a bid is flagged Compromised,
+the score is visually suppressed regardless of what the factors say — a
+tampered amount can't be trusted no matter how it scores on paper.
+
+### `GET/POST /api/feedback` — public feedback wall
+
+Unauthenticated endpoints backing a feedback wall on the public
+transparency page: `name` (optional), `message` (required, ≤1000 chars),
+`rating` (optional, 1-5). Feedback is about the transparency initiative
+itself, not tied to a specific tender or bid.
+
+### `/transparency` — the public page
+
+No login required. Lists every tender; for tenders with `bidsVisible: true`
+it shows each bid's amount, its `AIScoreBreakdown`, and its live
+`IntegrityBadge` (Blockchain Verified / Compromised / No On-Chain Record).
+Sealed tenders show the same "sealed until closing" message used elsewhere
+in the app. The feedback wall sits at the bottom.
+
+---
+
+## 12. Error Handling & Response Specifications
 
 All API errors return consistent JSON responses with appropriate HTTP status codes:
 
