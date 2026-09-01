@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ShieldAlert, ShieldCheck, X } from "lucide-react";
-import { bidAPI } from "../services/api.js";
-import { computeCommitHash, getBidOnChain } from "../blockchain/chain.js";
+import { usePublicClient } from "wagmi";
+import contractDetails from "../constants/contractDetails.json";
+import { computeCommitHash } from "../hooks/useSubmitToChain.js";
 import { formatCurrency } from "../utils/format.js";
 
 function HashRow({ label, value }) {
@@ -16,11 +17,10 @@ function HashRow({ label, value }) {
 export default function BidVerificationPanel({ bid, onClose }) {
   const [documentAmount, setDocumentAmount] = useState(String(bid.amount));
   const [documentName, setDocumentName] = useState("BidDocument.pdf");
-  const [result, setResult] = useState(
-    bid.verification?.status !== "Not Submitted" ? { data: bid.verification, source: "stored record" } : null
-  );
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const publicClient = usePublicClient();
 
   async function runVerification(event) {
     event.preventDefault();
@@ -30,55 +30,46 @@ export default function BidVerificationPanel({ bid, onClose }) {
     try {
       // Everything here runs in the browser: recompute the hash from the
       // claimed document amount + the bid's salt, read the bid's real
-      // commitment straight from the blockchain (getBid), and compare the
-      // two locally. No server round-trip decides the outcome.
+      // commitment straight from the blockchain (getBidderCommitment), and
+      // compare the two locally. No server round-trip decides the outcome.
       const recomputedHash = computeCommitHash(documentAmount, bid.salt);
-      const onChain = await getBidOnChain(bid.id);
 
-      if (!onChain.exists) {
-        const failResult = {
+      const [commitHash, , , exists] = await publicClient.readContract({
+        address: contractDetails.address,
+        abi: contractDetails.abi,
+        functionName: "getBidderCommitment",
+        args: [bid.tenderId, bid.bidderWalletAddress]
+      });
+
+      if (!exists) {
+        setResult({
           data: {
             status: "Failed",
             revealedAmount: Number(documentAmount),
             recomputedHash,
             onChainHash: "",
-            reason: "No on-chain commitment exists for this bid ID — nothing to verify against."
+            reason: "No on-chain commitment exists for this tender/wallet — nothing to verify against."
           },
           source: "blockchain (client-side read)"
-        };
-        setResult(failResult);
+        });
         return;
       }
 
-      const verified = recomputedHash.toLowerCase() === onChain.commitHash.toLowerCase();
-      const verifyResult = {
+      const verified = recomputedHash.toLowerCase() === commitHash.toLowerCase();
+      setResult({
         data: {
           status: verified ? "Verified" : "Failed",
           revealedAmount: Number(documentAmount),
           recomputedHash,
-          onChainHash: onChain.commitHash,
+          onChainHash: commitHash,
           reason: verified
             ? "Document amount matches the on-chain commitment."
             : "Document amount does not match the on-chain commitment. Verification failed — possible tampering."
         },
         source: "blockchain (client-side read)"
-      };
-      setResult(verifyResult);
-
-      // Best-effort: persist the outcome so the Admin Dashboard and public
-      // transparency page can show it too. The verdict above already stands
-      // on its own — this is just for other views, not a re-check.
-      bidAPI
-        .recordVerification(bid.id, {
-          verified,
-          documentAmount: Number(documentAmount),
-          documentName,
-          recomputedHash,
-          onChainHash: onChain.commitHash
-        })
-        .catch(() => {});
+      });
     } catch (err) {
-      setError(err.message || "Verification failed while reading the blockchain.");
+      setError(err.shortMessage || err.message || "Verification failed while reading the blockchain.");
     } finally {
       setLoading(false);
     }

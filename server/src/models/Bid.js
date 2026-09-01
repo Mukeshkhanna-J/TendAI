@@ -61,12 +61,11 @@ const bidSchema = new mongoose.Schema(
     },
 
     // --- Commit-reveal integrity fields ---
-    // salt + commitHash are produced client-side in the bidder's browser at
-    // submission time (client/src/blockchain/chain.js) and the commit is
-    // written on-chain directly from the bidder's own connected wallet
-    // (see chainService.js). The DB copies here are only a convenience
-    // cache for display, never the source of truth used during
-    // verification — that's always a live read from the chain.
+    // Generated client-side (see useSubmitToChain.js) at submission time:
+    // commitHash = sha256(amount + ':' + salt), written on-chain via
+    // TenderContract.submitBid(tenderId, commitHash) directly from the
+    // bidder's own connected wallet. The copies here are only a convenience
+    // cache for display — verification always re-reads the chain itself.
     salt: {
       type: String,
       default: ''
@@ -75,42 +74,20 @@ const bidSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
-    // The bidder's real MetaMask address, as reported by their browser
-    // when connecting. Cross-checked against the on-chain transaction's
-    // msg.sender in integrityService.js — that on-chain value is the
-    // authoritative fact; this field is only a display cache.
+    // The bidder's connected wallet address, as reported by their browser.
+    // Cross-checked against the on-chain commitment's own submitter
+    // (msg.sender of their transaction) before this record is ever created.
     bidderWalletAddress: {
       type: String,
       default: ''
     },
-    chainBlockNumber: {
-      type: Number,
-      default: null
-    },
-
-    // Populated later when a bid document (containing the claimed amount)
-    // is submitted and checked against the on-chain commitment.
-    verification: {
-      status: {
-        type: String,
-        enum: ['Not Submitted', 'Verified', 'Failed'],
-        default: 'Not Submitted'
-      },
-      documentName: { type: String, default: '' },
-      revealedAmount: { type: Number, default: null },
-      recomputedHash: { type: String, default: '' },
-      onChainHash: { type: String, default: '' },
-      reason: { type: String, default: '' },
-      verifiedAt: { type: Date, default: null }
-    },
 
     // Audit trail for the "insider tampering" demo: set whenever an admin
     // uses the direct override to change a bid's amount, bypassing the
-    // commit-reveal flow entirely. This is traditional audit logging —
-    // deliberately kept separate from the blockchain integrity check so
-    // the demo can show both: "someone changed this on X date" (this
-    // field) AND "and here's cryptographic proof it no longer matches
-    // what was originally committed" (checkBidIntegrity).
+    // commit-reveal flow entirely. Kept separate from the blockchain
+    // integrity check on purpose, so the demo can show both: "someone
+    // changed this on X date" (this field) AND "and here's cryptographic
+    // proof it no longer matches what was committed" (checkBidIntegrity).
     adminModified: {
       at: { type: Date, default: null },
       byAdminName: { type: String, default: '' },

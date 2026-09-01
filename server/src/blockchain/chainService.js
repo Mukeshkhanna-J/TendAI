@@ -5,19 +5,23 @@ import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Written by blockchain/scripts/deployBidVerification.js when the contract
-// is (re)deployed to the local chain. Contains { address, abi }.
+// Shared source of truth with the client: written by
+// blockchain/scripts/deploy.js whenever TenderContract is (re)deployed.
+// Reading it directly (rather than duplicating a copy under server/) means
+// the server can never drift out of sync with what the frontend is using.
 const deployment = JSON.parse(
-  readFileSync(path.join(__dirname, 'BidVerification.json'), 'utf-8')
+  readFileSync(
+    path.join(__dirname, '..', '..', '..', 'client', 'src', 'constants', 'contractDetails.json'),
+    'utf-8'
+  )
 );
 
-const RPC_URL = process.env.BLOCKCHAIN_RPC_URL || 'http://127.0.0.1:8545';
-const CONTRACT_ADDRESS = process.env.BID_VERIFICATION_CONTRACT_ADDRESS || deployment.address;
+const RPC_URL = process.env.BLOCKCHAIN_RPC_URL || 'http://127.0.0.1:7545';
+const CONTRACT_ADDRESS = process.env.BID_CONTRACT_ADDRESS || deployment.address;
 
-// The server only ever *reads* from the contract. Bidders write to it
-// directly from their own MetaMask wallet in the browser (see
-// client/src/blockchain/chain.js) — the server never holds a private key
-// or signs anything on a bidder's behalf.
+// The server only ever reads from the contract. Bidders write to it
+// directly from their own connected wallet (RainbowKit/wagmi) in the
+// browser — the server never holds a private key or signs anything.
 let provider;
 let contract;
 let chainAvailable = null;
@@ -36,10 +40,6 @@ function getContract() {
   return contract;
 }
 
-/**
- * Checks whether the local chain node is reachable. Cached for the process
- * lifetime after the first successful check to avoid hammering the RPC.
- */
 export const isChainAvailable = async () => {
   if (chainAvailable) return true;
   try {
@@ -52,18 +52,16 @@ export const isChainAvailable = async () => {
 };
 
 /**
- * Read back the immutable on-chain commitment for a bid. This is the
- * authoritative source of truth used during integrity checks — never trust
- * the mutable database record for the comparison.
+ * Read back the immutable commitment a wallet made for a given tender.
+ * This contract keys commitments by (tenderId, bidderAddress) — one bid
+ * per wallet per tender — rather than by a custom bid ID.
  */
-export const getOnChainCommitment = async (bidId) => {
-  const [commitHash, submitter, timestamp, exists] = await getContract().getBid(bidId);
-  return {
-    commitHash,
-    submitter,
-    timestamp: Number(timestamp),
-    exists
-  };
+export const getOnChainCommitment = async (tenderId, bidderAddress) => {
+  const [commitHash, submitter, timestamp, exists] = await getContract().getBidderCommitment(
+    tenderId,
+    bidderAddress
+  );
+  return { commitHash, submitter, timestamp: Number(timestamp), exists };
 };
 
 export const chainConfig = { RPC_URL, CONTRACT_ADDRESS };

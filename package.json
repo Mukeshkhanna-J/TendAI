@@ -15,6 +15,12 @@
   "type": "module",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "compile": "solcjs --bin --abi --include-path node_modules/ --base-path . blockchain/SimpleStorage.sol -o blockchain/build/"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "ethers": "^6.17.0",
+    "express": "^5.2.1"
   }
 }

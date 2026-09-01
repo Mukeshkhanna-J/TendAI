@@ -1,0 +1,56 @@
+[
+    {
+        "inputs": [
+            {
+                "internalType": "string",
+                "name": "tenderId",
+                "type": "string"
+            }
+        ],
+        "name": "getBids",
+        "outputs": [
+            {
+                "components": [
+                    {
+                        "internalType": "uint256",
+                        "name": "amount",
+                        "type": "uint256"
+                    },
+                    {
+                        "internalType": "string",
+                        "name": "organisation",
+                        "type": "string"
+                    }
+                ],
+                "internalType": "struct TenderContractBasic.Bid[]",
+                "name": "",
+                "type": "tuple[]"
+            }
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {
+                "internalType": "string",
+                "name": "tenderId",
+                "type": "string"
+            },
+            {
+                "internalType": "uint256",
+                "name": "amount",
+                "type": "uint256"
+            },
+            {
+                "internalType": "string",
+                "name": "orgName",
+                "type": "string"
+            }
+        ],
+        "name": "submitBid",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]

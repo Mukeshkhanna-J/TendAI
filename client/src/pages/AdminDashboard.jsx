@@ -119,8 +119,7 @@ export default function AdminDashboard() {
         <p className="mt-1 text-sm text-slate-600">
           Every bid's blockchain integrity is checked live below. The <strong>Admin Override</strong> action lets you
           demo what happens if a bid amount is edited directly in the database (e.g. by a rogue admin or a
-          compromised account) — it will immediately start reporting as Compromised everywhere it's shown, including
-          the public transparency page.
+          compromised account) — it will immediately start reporting as Compromised everywhere it's shown.
         </p>
         <div className="mt-4">
           {loading ? (
@@ -178,4 +177,3 @@ export default function AdminDashboard() {
     </div>
   );
 }
-

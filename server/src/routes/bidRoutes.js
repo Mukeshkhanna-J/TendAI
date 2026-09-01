@@ -5,7 +5,6 @@ import {
   getMyBids,
   getAllBidsForAdmin,
   getBidsByTenderId,
-  recordVerificationResult,
   adminOverrideBidAmount
 } from '../controllers/bidController.js';
 import { protect, authorize } from '../middleware/authMiddleware.js';
@@ -23,12 +22,7 @@ const bidValidation = [
   body('salt').trim().notEmpty().withMessage('Salt is required'),
   body('commitHash').trim().notEmpty().withMessage('Commit hash is required'),
   body('txHash').trim().notEmpty().withMessage('On-chain transaction hash is required'),
-  validate
-];
-
-const verifyDocumentValidation = [
-  body('verified').isBoolean().withMessage('verified must be a boolean'),
-  body('documentAmount').isNumeric().withMessage('Document amount must be a valid number'),
+  body('bidderWalletAddress').trim().notEmpty().withMessage('Bidder wallet address is required'),
   validate
 ];
 
@@ -41,7 +35,6 @@ router.post('/', protect, authorize('bidder'), bidValidation, submitBid);
 router.get('/my-bids', protect, authorize('bidder'), getMyBids);
 router.get('/admin/all-bids', protect, authorize('admin'), getAllBidsForAdmin);
 router.get('/tender/:tenderId', getBidsByTenderId);
-router.post('/:id/verify-document', protect, verifyDocumentValidation, recordVerificationResult);
 router.patch('/:id/admin-override', protect, authorize('admin'), adminOverrideValidation, adminOverrideBidAmount);
 
 export default router;

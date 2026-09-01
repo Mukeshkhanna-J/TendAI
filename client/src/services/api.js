@@ -66,9 +66,10 @@ export const tenderAPI = {
 
 export const bidAPI = {
   // Records a bid whose commit hash the bidder's own wallet has ALREADY
-  // written on-chain (see client/src/blockchain/chain.js). The server
-  // independently re-checks that on-chain commitment before accepting it.
-  record: async (bidData) => {
+  // written on-chain (see client/src/hooks/useSubmitToChain.js). The
+  // server independently re-checks that on-chain commitment before
+  // accepting it.
+  submit: async (bidData) => {
     const res = await API.post("/bids", bidData);
     return res.data.data;
   },
@@ -84,26 +85,9 @@ export const bidAPI = {
     const res = await API.get(`/bids/tender/${tenderId}`);
     return res.data;
   },
-  // Persists a verification outcome the browser already computed
-  // client-side (recomputed hash vs. a direct on-chain getBid read).
-  recordVerification: async (bidId, payload) => {
-    const res = await API.post(`/bids/${bidId}/verify-document`, payload);
-    return res.data;
-  },
   adminOverride: async (bidId, payload) => {
     const res = await API.patch(`/bids/${bidId}/admin-override`, payload);
     return res.data;
-  }
-};
-
-export const feedbackAPI = {
-  getAll: async () => {
-    const res = await API.get("/feedback");
-    return res.data.data;
-  },
-  submit: async (payload) => {
-    const res = await API.post("/feedback", payload);
-    return res.data.data;
   }
 };
 
