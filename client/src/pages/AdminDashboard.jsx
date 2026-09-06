@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BarChart3, FilePlus2, IndianRupee, ShieldCheck, CheckCircle2 } from "lucide-react";
+import { BarChart3, FilePlus2, IndianRupee, ShieldCheck, CheckCircle2, ShieldAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
@@ -39,9 +39,14 @@ export default function AdminDashboard() {
           <h1 className="text-2xl font-bold text-gov-navy">Admin Dashboard</h1>
           <p className="mt-2 text-sm text-slate-600">Manage published tenders and oversight of government procurement.</p>
         </div>
-        <Link className="btn-primary" to="/admin/create-tender">
-          <FilePlus2 className="h-4 w-4" /> Create New Tender
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link className="inline-flex items-center gap-2 rounded-md border border-rose-300 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50" to="/admin/bid-control">
+            <ShieldAlert className="h-4 w-4" /> Bid Value Control
+          </Link>
+          <Link className="btn-primary" to="/admin/create-tender">
+            <FilePlus2 className="h-4 w-4" /> Create New Tender
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

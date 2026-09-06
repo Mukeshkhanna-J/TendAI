@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Save } from "lucide-react";
+import { Plus, Save, ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
 import BlockchainBadge from "../components/BlockchainBadge.jsx";
 import DataTable from "../components/DataTable.jsx";
@@ -7,6 +7,10 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import TrustScoreBadge from "../components/TrustScoreBadge.jsx";
 import { bidAPI, savedAPI, tenderAPI } from "../services/api.js";
 import { useSubmitToChain } from "../hooks/useSubmitToChain.js";
+import { useVerifyBid, VERIFY_STATUS } from "../hooks/useVerifyBid.js";
+import VerificationReport from "../components/VerificationReport.jsx";
+import IntegrityBadge from "../components/IntegrityBadge.jsx";
+import { canonicalAmount, computeCommitHash } from "../utils/bidHash.js";
 import { formatCurrency, formatDate } from "../utils/format.js";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
@@ -19,8 +23,13 @@ export default function BidderDashboard() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState("");
-    const { isConnected } = useAccount();
+    const { address, isConnected } = useAccount();
     const submitToChain = useSubmitToChain();
+    const verifyBid = useVerifyBid();
+    // Verification verdicts keyed by bid id, plus the report currently expanded.
+    const [verifications, setVerifications] = useState({});
+    const [verifyingId, setVerifyingId] = useState(null);
+    const [activeReport, setActiveReport] = useState(null);
     useEffect(() => {
         async function loadDashboardData() {
             setLoading(true);
@@ -54,18 +63,30 @@ export default function BidderDashboard() {
         setSubmitting(true);
         setMessage("");
         try {
-            // want to change to not send amount to DB (changed here)
-            // const newBid = await bidAPI.submit({
-            //     tenderId: form.tenderId,
-            //     amount: Number(form.amount),
-            // });
-            // console.log(typeof form.amount);
-            const hash = await submitToChain({
+            // Normalise the amount once, so the value hashed on-chain and the
+            // value stored off-chain are provably the same string.
+            const amountString = canonicalAmount(form.amount);
+            const commitHash = computeCommitHash(form.amount);
+
+            // 1. Commit sha256(amount) to the smart contract. This record is
+            //    immutable and is what verification is measured against later.
+            const chainTxHash = await submitToChain({
                 tenderId: form.tenderId,
-                amount: form.amount,
+                amount: amountString,
             });
-            console.log("Transaction: " + hash);
-            setMyBids((current) => [...current]);
+            console.log("Transaction: " + chainTxHash);
+
+            // 2. Store the readable bid off-chain, along with the wallet that
+            //    signed the commitment so the chain record can be located again.
+            const newBid = await bidAPI.submit({
+                tenderId: form.tenderId,
+                amount: Number(form.amount),
+                walletAddress: address,
+                commitHash,
+                chainTxHash,
+            });
+
+            setMyBids((current) => [newBid, ...current]);
             setForm({ tenderId: liveTenders[0]?.id || "", amount: "" });
             setMessage(
                 "Bid submitted successfully to blockchain with AI trust score!",
@@ -75,6 +96,61 @@ export default function BidderDashboard() {
             setMessage(err.response?.data?.message || "Failed to submit bid.");
         } finally {
             setSubmitting(false);
+        }
+    }
+
+    /**
+     * Pull the bids from the API again and return the fresh list.
+     *
+     * Verification must always run against what the database holds *right now*,
+     * never the copy this page loaded on mount - an amount may have been edited
+     * in the meantime, and that is precisely what we are looking for.
+     */
+    async function refreshBids() {
+        try {
+            const fresh = (await bidAPI.getMyBids()) || [];
+            setMyBids(fresh);
+            return fresh;
+        } catch (err) {
+            console.error("Could not refresh bids before verification:", err);
+            return myBids;
+        }
+    }
+
+    /**
+     * Re-check one stored bid against the commitment held by the contract.
+     * A mismatch means the off-chain amount was edited after submission.
+     */
+    async function runVerification(bid) {
+        setVerifyingId(bid.id);
+        try {
+            const fresh = await refreshBids();
+            const current = fresh.find((item) => item.id === bid.id) || bid;
+            const result = await verifyBid(current);
+            setVerifications((existing) => ({ ...existing, [bid.id]: result }));
+            setActiveReport(result);
+        } finally {
+            setVerifyingId(null);
+        }
+    }
+
+    async function verifyAllBids() {
+        setVerifyingId("__all__");
+        try {
+            const fresh = await refreshBids();
+            const results = await Promise.all(fresh.map((bid) => verifyBid(bid)));
+            const next = {};
+            results.forEach((result) => {
+                next[result.bidId] = result;
+            });
+            setVerifications(next);
+            setActiveReport(
+                results.find((r) => r.status === VERIFY_STATUS.TAMPERED) ||
+                    results[0] ||
+                    null,
+            );
+        } finally {
+            setVerifyingId(null);
         }
     }
 
@@ -99,9 +175,38 @@ export default function BidderDashboard() {
             <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
                 <div className="space-y-6">
                     <section className="panel p-5">
-                        <h2 className="text-lg font-semibold text-gov-navy">
-                            My Bids
-                        </h2>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h2 className="text-lg font-semibold text-gov-navy">
+                                    My Bids
+                                </h2>
+                                <p className="mt-1 text-sm text-slate-600">
+                                    Re-check any bid against the commitment stored
+                                    on the blockchain at submission time.
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={verifyAllBids}
+                                disabled={
+                                    myBids.length === 0 || verifyingId !== null
+                                }
+                                className="inline-flex items-center gap-2 rounded-md bg-gov-navy px-4 py-2 text-sm font-semibold text-white hover:bg-gov-navy/90 disabled:cursor-not-allowed disabled:bg-slate-300"
+                            >
+                                <ShieldCheck className="h-4 w-4" />
+                                {verifyingId === "__all__"
+                                    ? "Verifying..."
+                                    : "Verify All Bids"}
+                            </button>
+                        </div>
+                        {activeReport && (
+                            <div className="mt-4">
+                                <VerificationReport
+                                    result={activeReport}
+                                    onClose={() => setActiveReport(null)}
+                                />
+                            </div>
+                        )}
                         <div className="mt-4">
                             {loading ? (
                                 <div className="text-slate-500 py-4">
@@ -161,6 +266,50 @@ export default function BidderDashboard() {
                                                 <BlockchainBadge
                                                     txHash={bid.txHash}
                                                 />
+                                            ),
+                                        },
+                                        {
+                                            key: "integrity",
+                                            header: "Integrity Check",
+                                            render: (bid) => (
+                                                <div className="space-y-2">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            runVerification(bid)
+                                                        }
+                                                        disabled={
+                                                            verifyingId !== null
+                                                        }
+                                                        className="inline-flex items-center gap-1.5 rounded-md border border-gov-navy px-3 py-1.5 text-xs font-semibold text-gov-navy hover:bg-gov-navy hover:text-white disabled:cursor-not-allowed disabled:border-slate-300 disabled:text-slate-400 disabled:hover:bg-transparent"
+                                                    >
+                                                        <ShieldCheck className="h-3.5 w-3.5" />
+                                                        {verifyingId === bid.id
+                                                            ? "Checking..."
+                                                            : "Verify"}
+                                                    </button>
+                                                    {verifications[bid.id] && (
+                                                        <button
+                                                            type="button"
+                                                            className="block text-left"
+                                                            onClick={() =>
+                                                                setActiveReport(
+                                                                    verifications[
+                                                                        bid.id
+                                                                    ],
+                                                                )
+                                                            }
+                                                        >
+                                                            <IntegrityBadge
+                                                                status={
+                                                                    verifications[
+                                                                        bid.id
+                                                                    ].status
+                                                                }
+                                                            />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             ),
                                         },
                                     ]}

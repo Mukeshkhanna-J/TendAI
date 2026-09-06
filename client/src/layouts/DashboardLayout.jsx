@@ -1,4 +1,4 @@
-import { FilePlus2, LayoutDashboard, LogOut, SearchCheck } from "lucide-react";
+import { FilePlus2, LayoutDashboard, LogOut, SearchCheck, ShieldAlert } from "lucide-react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import logo from "../assets/logo.svg";
 import { useAuth } from "../hooks/useAuth.js";
@@ -11,6 +11,7 @@ export default function DashboardLayout() {
     ? [
       { to: "/admin", label: "Admin Dashboard", icon: LayoutDashboard },
       { to: "/admin/create-tender", label: "Create Tender", icon: FilePlus2 },
+      { to: "/admin/bid-control", label: "Bid Value Control", icon: ShieldAlert },
       { to: "/tenders", label: "Public Tenders", icon: SearchCheck }
     ]
     : [

@@ -80,6 +80,16 @@ export const bidAPI = {
   getByTender: async (tenderId) => {
     const res = await API.get(`/bids/tender/${tenderId}`);
     return res.data;
+  },
+  // Insider tamper demo (admin only): rewrites the off-chain amount.
+  // The smart contract commitment is untouched by this call.
+  adminUpdateAmount: async (bidId, amount, alsoUpdateStoredHash = false) => {
+    const res = await API.patch(`/bids/${bidId}/amount`, { amount, alsoUpdateStoredHash });
+    return res.data;
+  },
+  adminRestoreAmount: async (bidId) => {
+    const res = await API.patch(`/bids/${bidId}/restore`);
+    return res.data;
   }
 };
 

@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import DashboardLayout from "./layouts/DashboardLayout.jsx";
 import MainLayout from "./layouts/MainLayout.jsx";
 import AdminDashboard from "./pages/AdminDashboard.jsx";
+import AdminBidControl from "./pages/AdminBidControl.jsx";
 import BidderDashboard from "./pages/BidderDashboard.jsx";
 import CreateTender from "./pages/CreateTender.jsx";
 import Home from "./pages/Home.jsx";
@@ -105,6 +106,16 @@ export default function App() {
                     element={
                         <ProtectedRoute role="admin">
                             <CreateTender />
+                        </ProtectedRoute>
+                    }
+                />
+                {/* Insider tamper simulation. Deliberately outside Web3Scope:
+                    the attack only ever touches the off-chain database. */}
+                <Route
+                    path="admin/bid-control"
+                    element={
+                        <ProtectedRoute role="admin">
+                            <AdminBidControl />
                         </ProtectedRoute>
                     }
                 />
