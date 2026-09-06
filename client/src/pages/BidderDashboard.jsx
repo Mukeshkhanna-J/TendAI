@@ -8,6 +8,7 @@ import TrustScoreBadge from "../components/TrustScoreBadge.jsx";
 import { bidAPI, savedAPI, tenderAPI } from "../services/api.js";
 import { useSubmitToChain } from "../hooks/useSubmitToChain.js";
 import { useVerifyBid, VERIFY_STATUS } from "../hooks/useVerifyBid.js";
+import { useContractDeployed } from "../hooks/useContractDeployed.js";
 import VerificationReport from "../components/VerificationReport.jsx";
 import IntegrityBadge from "../components/IntegrityBadge.jsx";
 import { canonicalAmount, computeCommitHash } from "../utils/bidHash.js";
@@ -23,9 +24,12 @@ export default function BidderDashboard() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [message, setMessage] = useState("");
+    // Failures used to render in the green success box; keep the tone honest.
+    const [messageIsError, setMessageIsError] = useState(false);
     const { address, isConnected } = useAccount();
     const submitToChain = useSubmitToChain();
     const verifyBid = useVerifyBid();
+    const checkContractDeployed = useContractDeployed();
     // Verification verdicts keyed by bid id, plus the report currently expanded.
     const [verifications, setVerifications] = useState({});
     const [verifyingId, setVerifyingId] = useState(null);
@@ -62,7 +66,18 @@ export default function BidderDashboard() {
         if (!form.tenderId || !form.amount) return;
         setSubmitting(true);
         setMessage("");
+        setMessageIsError(false);
         try {
+            // A write to an address with no contract code succeeds silently and
+            // stores nothing, producing a bid that can never be verified. Refuse
+            // to submit rather than create one.
+            const deployed = await checkContractDeployed();
+            if (!deployed.ok) {
+                setMessage(deployed.message);
+                setMessageIsError(true);
+                return;
+            }
+
             // Normalise the amount once, so the value hashed on-chain and the
             // value stored off-chain are provably the same string.
             const amountString = canonicalAmount(form.amount);
@@ -94,6 +109,7 @@ export default function BidderDashboard() {
         } catch (err) {
             console.error("Failed to submit bid:", err);
             setMessage(err.response?.data?.message || "Failed to submit bid.");
+            setMessageIsError(true);
         } finally {
             setSubmitting(false);
         }
@@ -167,7 +183,13 @@ export default function BidderDashboard() {
             </div>
 
             {message && (
-                <div className="rounded-md bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 ring-1 ring-emerald-200">
+                <div
+                    className={`rounded-md px-4 py-3 text-sm font-medium ring-1 ${
+                        messageIsError
+                            ? "bg-rose-50 text-rose-800 ring-rose-200"
+                            : "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                    }`}
+                >
                     {message}
                 </div>
             )}

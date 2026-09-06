@@ -17,6 +17,10 @@ const STYLES = {
         label: "Not Anchored",
         className: "bg-slate-100 text-slate-600 ring-slate-300",
     },
+    [VERIFY_STATUS.NO_CONTRACT]: {
+        label: "No Contract",
+        className: "bg-orange-50 text-orange-700 ring-orange-200",
+    },
     [VERIFY_STATUS.ERROR]: {
         label: "Check Failed",
         className: "bg-orange-50 text-orange-700 ring-orange-200",

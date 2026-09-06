@@ -1,24 +1,27 @@
 import { useCallback } from "react";
 import { useConfig } from "wagmi";
-import { readContract } from "wagmi/actions";
+import { getBytecode, getChainId, readContract } from "wagmi/actions";
 import contractDetails from "../constants/contractDetails.json";
 import { computeCommitHash, hashesMatch } from "../utils/bidHash.js";
 
 /**
  * Verification verdicts.
  *
- * VERIFIED   - database amount hashes to exactly the commitment on-chain.
- * TAMPERED   - a commitment exists, but the database amount no longer hashes
- *              to it. Somebody changed the value after submission.
+ * VERIFIED     - database amount hashes to exactly the commitment on-chain.
+ * TAMPERED     - a commitment exists, but the database amount no longer hashes
+ *                to it. Somebody changed the value after submission.
  * NOT_ON_CHAIN - the contract holds no commitment for this tender + wallet.
- * NO_WALLET  - the bid record predates on-chain anchoring (e.g. seeded data).
- * ERROR      - the RPC read failed (node down, wrong network, bad address).
+ * NO_WALLET    - the bid record predates on-chain anchoring (e.g. seeded data).
+ * NO_CONTRACT  - nothing is deployed at the configured contract address on the
+ *                connected chain. Not a bid problem - a setup problem.
+ * ERROR        - the RPC read failed (node down, wrong network).
  */
 export const VERIFY_STATUS = {
     VERIFIED: "VERIFIED",
     TAMPERED: "TAMPERED",
     NOT_ON_CHAIN: "NOT_ON_CHAIN",
     NO_WALLET: "NO_WALLET",
+    NO_CONTRACT: "NO_CONTRACT",
     ERROR: "ERROR",
 };
 
@@ -48,12 +51,15 @@ export function useVerifyBid() {
 
     return useCallback(
         async (bid) => {
+            const chainId = getChainId(config);
             const base = {
                 bidId: bid?.id,
                 tenderId: bid?.tenderId,
                 amount: bid?.amount,
                 walletAddress: bid?.walletAddress || null,
                 storedHash: bid?.commitHash || null,
+                contractAddress: address,
+                chainId,
                 localHash: null,
                 chainHash: null,
                 submitter: null,
@@ -74,6 +80,19 @@ export function useVerifyBid() {
             const localHash = computeCommitHash(bid.amount);
 
             try {
+                // A call to an address with no code returns empty data, which
+                // surfaces as an opaque 'returned no data ("0x")' error. Check
+                // for the contract first so the real problem is named.
+                const bytecode = await getBytecode(config, { address });
+                if (!bytecode || bytecode === "0x") {
+                    return {
+                        ...base,
+                        localHash,
+                        status: VERIFY_STATUS.NO_CONTRACT,
+                        message: `No contract is deployed at ${address} on chain ${chainId}. Redeploy the contract (blockchain/scripts/deploy.js rewrites client/src/constants/contractDetails.json) and submit a fresh bid. Restarting Ganache wipes all previously stored commitments.`,
+                    };
+                }
+
                 const raw = await readContract(config, {
                     address,
                     abi,
@@ -90,7 +109,7 @@ export function useVerifyBid() {
                         localHash,
                         status: VERIFY_STATUS.NOT_ON_CHAIN,
                         message:
-                            "No commitment found on the contract for this tender and wallet. If the bid was just submitted, wait for the transaction to be mined and try again.",
+                            "The contract holds no commitment for this tender and wallet. If the bid was just submitted, wait for the transaction to be mined and try again; otherwise the commitment never reached this contract.",
                     };
                 }
 

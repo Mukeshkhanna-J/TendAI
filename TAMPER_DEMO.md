@@ -100,11 +100,59 @@ verification passes again. Useful for re-running the demo.
 | `TAMPERED` | A commitment exists, but the stored amount no longer matches it. |
 | `NOT_ON_CHAIN` | The contract holds no commitment for this tender + wallet (transaction not yet mined, or wrong network / contract address). |
 | `NO_WALLET` | The bid record has no wallet address — seeded or pre-blockchain data that was never anchored. |
-| `ERROR` | The RPC read failed. Check that Ganache is running and `contractDetails.json` matches the deployed address. |
+| `NO_CONTRACT` | Nothing is deployed at the address in `contractDetails.json` on the connected chain. A setup problem, not a bid problem — see below. |
+| `ERROR` | The RPC read failed. Check that Ganache is running. |
 
 Seeded bids (`BID-901` … `BID-905`) report `NO_WALLET`: they were never committed
 on-chain, so there is nothing to verify against. Only bids submitted through the
 wallet flow can be verified.
+
+---
+
+## Troubleshooting
+
+### `No contract deployed at 0x… ` / `getBidderCommitment returned no data ("0x")`
+
+The address in `client/src/constants/contractDetails.json` is committed to the
+repository, so a fresh clone carries the address from whoever deployed last. It
+will not match a Ganache instance you started yourself, and restarting Ganache
+wipes all deployed contracts and stored commitments.
+
+This failure is quiet on the write side: a transaction sent to an address with
+no code does not revert. It succeeds, returns an ordinary transaction hash, and
+stores nothing. Bids submitted that way look fine until verification finds
+nothing to check against. The dashboard now refuses to submit when the contract
+is missing, but any bid created before that check has no commitment and can
+never verify — delete it and submit a new one.
+
+Fix:
+
+```bash
+cd blockchain && npm install
+```
+
+Create `blockchain/.env` (gitignored, so not in a fresh clone):
+
+```
+GANACHE_RPC_URL=http://127.0.0.1:7545
+GANACHE_PRIVATE_KEY=<private key of a Ganache account>
+```
+
+With Ganache running on port 7545, deploy — this rewrites `contractDetails.json`
+with the new address:
+
+```bash
+npx hardhat run scripts/deploy.js --network ganache
+```
+
+Restart the Vite dev server so the new JSON is picked up, then submit a fresh
+bid and verify it.
+
+### Chain id mismatch
+
+`client/src/App.jsx` defines the Ganache chain as id **1337**. If your Ganache
+reports a different chain id, MetaMask connects but reads resolve against the
+wrong network.
 
 ---
 
@@ -116,6 +164,7 @@ Added:
 | --- | --- |
 | `client/src/utils/bidHash.js` | Canonical amount → sha256 commitment, shared hashing rule. |
 | `client/src/hooks/useVerifyBid.js` | Reads `getBidderCommitment` and returns the verdict. |
+| `client/src/hooks/useContractDeployed.js` | Pre-flight check that the contract address actually holds code. |
 | `client/src/components/VerificationReport.jsx` | Side-by-side hash comparison panel. |
 | `client/src/components/IntegrityBadge.jsx` | Compact verdict pill. |
 | `client/src/pages/AdminBidControl.jsx` | The attack screen. |

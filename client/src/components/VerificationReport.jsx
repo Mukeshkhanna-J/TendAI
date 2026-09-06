@@ -27,6 +27,12 @@ const PRESET = {
         tone: "border-slate-200 bg-slate-50 text-slate-800",
         chip: "bg-slate-500 text-white",
     },
+    [VERIFY_STATUS.NO_CONTRACT]: {
+        title: "No Contract At The Configured Address",
+        icon: Link2Off,
+        tone: "border-orange-200 bg-orange-50 text-orange-900",
+        chip: "bg-orange-500 text-white",
+    },
     [VERIFY_STATUS.ERROR]: {
         title: "Verification Could Not Complete",
         icon: AlertTriangle,
@@ -155,6 +161,15 @@ export default function VerificationReport({ result, onClose }) {
                             <span className="font-mono">{result.submitter}</span>
                         </>
                     )}
+                </p>
+            )}
+
+            {(result.status === VERIFY_STATUS.NO_CONTRACT ||
+                result.status === VERIFY_STATUS.NOT_ON_CHAIN) && (
+                <p className="mt-3 break-all text-xs text-slate-600">
+                    Contract:{" "}
+                    <span className="font-mono">{result.contractAddress}</span>
+                    {" · "}chain id: {result.chainId}
                 </p>
             )}
 
