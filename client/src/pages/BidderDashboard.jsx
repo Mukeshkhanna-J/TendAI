@@ -48,6 +48,14 @@ export default function BidderDashboard() {
         loadDashboardData();
     }, []);
 
+    useEffect(() => {
+        if (!message) return;
+        const timer = setTimeout(() => {
+            setMessage("");
+        }, 10000);
+        return () => clearTimeout(timer);
+    }, [message]);
+
     async function submitBid(event) {
         event.preventDefault();
         if (!form.tenderId || !form.amount) return;
@@ -64,7 +72,7 @@ export default function BidderDashboard() {
                 tenderId: form.tenderId,
                 amount: form.amount,
             });
-            console.log("Transaction: " + hash);
+            console.log(hash);
             setMyBids((current) => [...current]);
             setForm({ tenderId: liveTenders[0]?.id || "", amount: "" });
             setMessage(
@@ -72,7 +80,7 @@ export default function BidderDashboard() {
             );
         } catch (err) {
             console.error("Failed to submit bid:", err);
-            setMessage(err.response?.data?.message || "Failed to submit bid.");
+            setMessage(`Failed to submit bid. ${err}`);
         } finally {
             setSubmitting(false);
         }
