@@ -1,6 +1,6 @@
 import { Menu, X } from "lucide-react";
 import { useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import logo from "../assets/logo.svg";
 import { useAuth } from "../hooks/useAuth.js";
 
@@ -8,8 +8,15 @@ const navClass = ({ isActive }) => `rounded-md px-3 py-2 text-sm font-semibold $
 
 export default function Navbar() {
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
   const { isAuthenticated, user, logout } = useAuth();
   const dashboardPath = user?.role === "admin" ? "/admin" : "/bidder";
+
+  const handleLogout = () => {
+    logout();
+    setOpen(false);
+    navigate("/");
+  };
 
   return (
     <header className="bg-gov-navy text-white">
@@ -37,7 +44,7 @@ export default function Navbar() {
             {isAuthenticated ? (
               <>
                 <NavLink className={navClass} to={dashboardPath}>Dashboard</NavLink>
-                <button className="ml-2 rounded-md border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10" onClick={logout} type="button">Logout</button>
+                <button className="ml-2 rounded-md border border-white/20 px-3 py-2 text-sm font-semibold text-white hover:bg-white/10" onClick={handleLogout} type="button">Logout</button>
               </>
             ) : (
               <NavLink className={navClass} to="/login">Login</NavLink>
@@ -51,7 +58,7 @@ export default function Navbar() {
             {isAuthenticated ? (
               <>
                 <NavLink onClick={() => setOpen(false)} className={navClass} to={dashboardPath}>Dashboard</NavLink>
-                <button className="block rounded-md px-3 py-2 text-sm font-semibold text-blue-50" onClick={() => { logout(); setOpen(false); }} type="button">Logout</button>
+                <button className="block rounded-md px-3 py-2 text-sm font-semibold text-blue-50" onClick={handleLogout} type="button">Logout</button>
               </>
             ) : (
               <NavLink onClick={() => setOpen(false)} className={navClass} to="/login">Login</NavLink>
